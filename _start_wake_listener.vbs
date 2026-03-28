@@ -27,58 +27,39 @@ result = shell.Run("""" & pythonw & """ """ & script & """", 0, False)
 WriteLog "WakeListener started PID: " & result
 
 Function IsProcessRunning(processName)
-    Dim tempFile, wmiQuery, output, count
-    tempFile = shell.ExpandEnvironmentStrings("%TEMP%\") & "roamin_wake_check_" & Replace(Replace(Replace(Now(), "/", "-"), ":", "-"), " ", "_") & ".txt"
-
-    ' WMI query to find pythonw processes with run_wake_listener in CommandLine
-    wmiQuery = "SELECT * FROM Win32_Process WHERE Name='pythonw.exe' AND CommandLine LIKE '%run_wake_listener%'"
-
-    ' Save WMI output to temp file using PowerShell
-    Dim psCommand
-    psCommand = "Get-WmiObject -Query """ & wmiQuery & """ | Select-Object ProcessId,CommandLine | Out-File -FilePath """ & tempFile & """"
-    shell.Run "powershell -Command " & Chr(34) & psCommand & Chr(34), 0, True
-
-    ' Check if file has any entries
-    If fso.FileExists(tempFile) Then
-        output = ReadFile(tempFile)
-        count = CountLines(output)
-        fso.DeleteFile tempFile, True
-
-        IsProcessRunning = (count > 0)
-    Else
-        IsProcessRunning = False
-    End If
+    Dim wmi, processes, process, count
+    count = 0
+    On Error Resume Next
+    Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+    Set processes = wmi.ExecQuery("SELECT * FROM Win32_Process WHERE Name='pythonw.exe'")
+    For Each process In processes
+        If InStr(process.CommandLine, processName) > 0 Then
+            count = count + 1
+        End If
+    Next
+    On Error GoTo 0
+    IsProcessRunning = (count > 0)
 End Function
 
 Sub WaitForChatterbox()
-    Dim attempts, port, url, shellObj, http, status
+    Dim attempts, port, url, http
 
-    Set shellObj = CreateObject("WScript.Shell")
-
-    ' Poll up to 20 times (60 seconds total)
     For attempts = 1 To 20
-        ' Try each port in range 4123-4129
         For port = 4123 To 4129
             url = "http://127.0.0.1:" & port & "/health"
-
             On Error Resume Next
             Set http = CreateObject("MSXML2.XMLHTTP")
             http.Open "GET", url, False
             http.Send
-
             If http.Status = 200 Then
-                ' Chatterbox is up — we can continue
                 Set http = Nothing
                 Exit Sub
             End If
-
             On Error GoTo 0
+            Set http = Nothing
         Next
-
-        WScript.Sleep 3000 ' Wait 3 seconds before next poll
+        WScript.Sleep 3000
     Next
-
-    ' If we get here, Chatterbox didn't come up — continue anyway (TTS fallback available)
 End Sub
 
 Sub WriteLog(message)
@@ -98,24 +79,3 @@ Sub WriteLog(message)
     f.Close
     On Error GoTo 0
 End Sub
-
-Function ReadFile(filePath)
-    Dim f
-    If fso.FileExists(filePath) Then
-        Set f = fso.OpenTextFile(filePath, 1)
-        ReadFile = f.ReadAll
-        f.Close
-    Else
-        ReadFile = ""
-    End If
-End Function
-
-Function CountLines(text)
-    Dim trimmed
-    trimmed = Trim(text)
-    If trimmed = "" Then
-        CountLines = 0
-    Else
-        CountLines = UBound(Split(trimmed, vbCrLf)) + 1
-    End If
-End Function
