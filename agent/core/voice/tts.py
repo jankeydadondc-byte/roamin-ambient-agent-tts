@@ -36,7 +36,7 @@ _CACHE_DIR = Path(__file__).parent / "phrase_cache"
 # Pre-defined phrases to cache as WAV files at startup.
 # Speak these instantly without hitting Chatterbox API.
 CACHED_PHRASES: list[str] = [
-    "Yes?",
+    "Yeah?",
     "Done.",
     "Sorry, I didn't catch that.",
     "Working on it.",
@@ -50,6 +50,14 @@ CACHED_PHRASES: list[str] = [
     "Anything else?",
     "I didn't find anything about that.",
 ]
+
+# Per-phrase synthesis overrides — tune exaggeration/cfg_weight per phrase
+# Default: exaggeration=0.5, cfg_weight=0.5
+PHRASE_PARAMS: dict[str, dict] = {
+    "Yeah?": {"exaggeration": 0.6, "cfg_weight": 0.4},
+    "On it.": {"exaggeration": 0.6, "cfg_weight": 0.4},
+    "Got it.": {"exaggeration": 0.6, "cfg_weight": 0.4},
+}
 
 
 def _phrase_cache_key(text: str) -> str:
@@ -76,12 +84,12 @@ def _chatterbox_available() -> bool:
     return _find_chatterbox_url() is not None
 
 
-def _synthesize_to_file(text: str, url: str, dest: Path) -> bool:
+def _synthesize_to_file(text: str, url: str, dest: Path, exaggeration: float = 0.5, cfg_weight: float = 0.5) -> bool:
     """Synthesize text via Chatterbox and save WAV to dest. Returns True on success."""
     if _requests is None:
         return False
     try:
-        payload: dict = {"input": text, "exaggeration": 0.5, "cfg_weight": 0.5}
+        payload: dict = {"input": text, "exaggeration": exaggeration, "cfg_weight": cfg_weight}
         if _VOICE_SAMPLE.exists():
             payload["voice"] = "voice-sample"
         timeout = min(30 + len(text) // 10, 120)
@@ -136,7 +144,8 @@ class TextToSpeech:
                 skipped += 1
             else:
                 print(f"[TTS] Caching: '{phrase}'")
-                if _synthesize_to_file(phrase, url, dest):
+                params = PHRASE_PARAMS.get(phrase, {})
+                if _synthesize_to_file(phrase, url, dest, **params):
                     self._phrase_cache[phrase] = dest
                     generated += 1
         print(f"[TTS] Phrase cache ready: {generated} generated, {skipped} loaded from disk")
