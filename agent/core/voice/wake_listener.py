@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import threading
+import time
 
 try:
     import keyboard
@@ -64,80 +65,91 @@ class WakeListener:
 
     def _on_wake(self) -> None:
         """Handle wake word trigger: listen for command and execute."""
-        print("[Roamin] Wake word triggered")
+        t0 = time.perf_counter()
+        print("[Roamin] Wake triggered at t=0.000")
 
         # Greet user
         tts = TextToSpeech()
         if tts.is_available():
             tts.speak("Yes?")
+        t_greeted = time.perf_counter()
+        print(f"[Roamin] t={t_greeted - t0:.3f}s  'Yes?' spoken")
 
-        # Listen for command
+        # STT — record and transcribe
         stt = SpeechToText()
         transcription = None
-
         try:
             transcription = stt.record_and_transcribe(duration_seconds=5)
         except Exception as e:
             print(f"[Warning] STT error: {e}")
+        t_stt = time.perf_counter()
+        print(f"[Roamin] t={t_stt - t0:.3f}s  STT done (+{t_stt - t_greeted:.3f}s) → '{transcription}'")
 
         if transcription is None or transcription.strip() == "":
             if tts.is_available():
                 tts.speak("Sorry, I didn't catch that.")
             return
 
-        print(f"[Roamin] Command: {transcription}")
-
-        # Execute command
+        # AgentLoop
+        result = {}
         try:
             agent_loop = AgentLoop()
             result = agent_loop.run(transcription)
-
-            # Reply based on result
-            if tts.is_available():
-                status = result.get("status", "unknown")
-
-                if status == "completed":
-                    try:
-                        router = ModelRouter()
-                        messages = [
-                            {
-                                "role": "system",
-                                "content": (
-                                    "You are Roamin, a voice assistant. "
-                                    "Reply in ONE short sentence, spoken naturally. "
-                                    "No narration, no lists, no internal state. "
-                                    "Just a direct natural reply."
-                                ),
-                            },
-                            {"role": "user", "content": transcription},
-                        ]
-                        reply = router.respond(
-                            "default",
-                            transcription,
-                            messages=messages,
-                            max_tokens=60,
-                            temperature=0.7,
-                            no_think=True,
-                        )
-                        # Strip reasoning tokens and clean up
-                        reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
-                        reply = reply[:200] if reply else "Done."
-                    except Exception:
-                        reply = "Done."
-                elif status == "failed":
-                    reply = "I couldn't complete that task."
-                elif status == "blocked":
-                    reply = "That action needs your approval."
-                else:
-                    reply = "Working on it."
-
-                tts.speak(reply)
         except Exception as e:
             print(f"[Warning] AgentLoop error: {e}")
             if tts.is_available():
                 tts.speak("I encountered an error processing that command.")
+            return
+        t_agent = time.perf_counter()
+        print(f"[Roamin] t={t_agent - t0:.3f}s  AgentLoop done (+{t_agent - t_stt:.3f}s) status={result.get('status')}")
 
-        # Store interaction in memory
+        # Generate reply via ModelRouter
+        reply = "Done."
+        status = result.get("status", "unknown")
+        if status == "completed":
+            try:
+                router = ModelRouter()
+                messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are Roamin, a voice assistant. "
+                            "Reply in ONE short sentence, spoken naturally. "
+                            "No narration, no lists, no internal state. "
+                            "Just a direct natural reply."
+                        ),
+                    },
+                    {"role": "user", "content": transcription},
+                ]
+                reply = router.respond(
+                    "default",
+                    transcription,
+                    messages=messages,
+                    max_tokens=60,
+                    temperature=0.7,
+                    no_think=True,
+                )
+                reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+                reply = reply[:200] if reply else "Done."
+            except Exception:
+                reply = "Done."
+        elif status == "failed":
+            reply = "I couldn't complete that task."
+        elif status == "blocked":
+            reply = "That action needs your approval."
+        else:
+            reply = "Working on it."
+        t_reply = time.perf_counter()
+        print(f"[Roamin] t={t_reply - t0:.3f}s  Reply generated (+{t_reply - t_agent:.3f}s) → '{reply}'")
+
+        # TTS — speak reply
+        if tts.is_available():
+            tts.speak(reply)
+        t_spoken = time.perf_counter()
+        print(f"[Roamin] t={t_spoken - t0:.3f}s  Reply spoken (+{t_spoken - t_reply:.3f}s)")
+        print(f"[Roamin] TOTAL: {t_spoken - t0:.3f}s")
+
+        # Store in memory
         try:
             memory = MemoryManager()
             memory.write_to_memory(
@@ -145,4 +157,4 @@ class WakeListener:
                 {"session_id": "voice_interface", "model_used": "whisper", "content": f"User: {transcription}"},
             )
         except Exception:
-            pass  # Non-critical - don't fail if memory storage fails
+            pass
