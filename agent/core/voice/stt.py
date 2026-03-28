@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import threading
 
 import numpy as np
 
@@ -80,6 +80,7 @@ class SpeechToText:
             speech_confirm_chunks = 0
             speech_started = False
             total_chunks = 0
+            done_event = threading.Event()
 
             print("[Roamin] Listening (Silero VAD)...")
 
@@ -109,18 +110,21 @@ class SpeechToText:
                     else:
                         speech_confirm_chunks = 0
                         if total_chunks > 800:  # 5 second timeout with no speech
+                            done_event.set()
                             raise sd.CallbackStop()
                 else:
                     # Speech already started, watch for silence
                     if prob < 0.3:
                         silence_chunks += 1
                         if silence_chunks >= 24:  # 24 chunks = ~1.5 seconds of silence
+                            done_event.set()
                             raise sd.CallbackStop()
                     else:
                         silence_chunks = 0
 
                 # Safety cap: max 10 seconds total recording
                 if total_chunks > 3200:
+                    done_event.set()
                     raise sd.CallbackStop()
 
             with sd.InputStream(
@@ -130,8 +134,7 @@ class SpeechToText:
                 blocksize=chunk_size,
                 callback=callback,
             ):
-                while True:
-                    time.sleep(0.1)
+                done_event.wait(timeout=12)  # max 12s safety wall
 
         except sd.CallbackStop:
             pass  # Normal termination via VAD logic
