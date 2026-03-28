@@ -12,9 +12,9 @@ To use voice cloning:
 
 from __future__ import annotations
 
-from pathlib import Path
 import tempfile
 import threading
+from pathlib import Path
 
 try:
     import pyttsx3
@@ -110,7 +110,9 @@ class TextToSpeech:
             payload: dict = {"input": text, "exaggeration": 0.5, "cfg_weight": 0.5}
             if _VOICE_SAMPLE.exists():
                 payload["voice"] = "voice-sample"
-            r = _requests.post(f"{url}/v1/audio/speech", json=payload, timeout=30)
+            # Scale timeout with text length: 30s base + 1s per 10 chars, max 120s
+            timeout = min(30 + len(text) // 10, 120)
+            r = _requests.post(f"{url}/v1/audio/speech", json=payload, timeout=timeout)
             r.raise_for_status()
             out = _TMP_DIR / "chatterbox_out.wav"
             out.write_bytes(r.content)
