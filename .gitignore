@@ -1,0 +1,36 @@
+# Roamin Ambient Agent
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+
+# Venv marker (recreate with setup instructions)
+roamin.pth
+
+# Logs and runtime state
+logs/
+*.log
+.loom/
+
+# Model data (large, machine-specific)
+*.db
+*.sqlite
+chroma_db/
+
+# Secrets
+*.vault
+*.key
+.secrets.baseline
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+_test_*.py
+_audit_*.py
+_commit_*.bat
+_check_*.bat
+*.tmp
