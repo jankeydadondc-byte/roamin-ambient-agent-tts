@@ -200,6 +200,14 @@ class MemoryStore:
                 return dict(zip(columns, row))
             return None
 
+    def get_all_named_facts(self) -> list[dict]:
+        """Return all stored named facts."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM named_facts ORDER BY id DESC")
+            columns = [column[0] for column in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
     # --- UPDATE operations ---
 
     def update_conversation_history(self, record_id: int, content: str) -> bool:

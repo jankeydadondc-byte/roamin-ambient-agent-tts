@@ -73,6 +73,55 @@ class WakeListener:
         thread = threading.Thread(target=self._on_wake, daemon=True)
         thread.start()
 
+    def _extract_and_store_fact(self, transcription: str, memory: MemoryManager) -> bool:
+        """Detect 'remember X is Y' patterns and store as named_fact. Returns True if fact stored."""
+        lower = transcription.lower()
+        patterns = [
+            r"remember (?:that )?my (.+?) is (.+)",
+            r"my (.+?) is (.+)",
+            r"save (?:that )?my (.+?) is (.+)",
+            r"note (?:that )?my (.+?) is (.+)",
+        ]
+        for pattern in patterns:
+            m = re.search(pattern, lower)
+            if m:
+                fact_name = m.group(1).strip().rstrip(".")
+                fact_value = m.group(2).strip().rstrip(".")
+                try:
+                    memory.write_to_memory("named_fact", {"fact_name": fact_name, "value": fact_value})
+                    print(f"[Roamin] Stored fact: '{fact_name}' = '{fact_value}'")
+                    return True
+                except Exception as e:
+                    print(f"[Warning] Failed to store fact: {e}")
+        return False
+
+    def _build_memory_context(self, transcription: str, memory: MemoryManager) -> str:
+        """Query memory and build a context string to inject into the reply prompt."""
+        context_parts = []
+
+        # Search ChromaDB for semantically related memories
+        try:
+            results = memory.search_memory(transcription)
+            docs = results.get("documents", [])
+            if docs:
+                context_parts.append("Relevant memories: " + " | ".join(docs[:3]))
+        except Exception:
+            pass
+
+        # Pull all named facts (small table, load all)
+        try:
+            from agent.core.memory.memory_store import MemoryStore
+
+            store = MemoryStore()
+            facts = store.get_all_named_facts() if hasattr(store, "get_all_named_facts") else []
+            if facts:
+                fact_strs = [f"{f['fact_name']}: {f['value']}" for f in facts]
+                context_parts.append("Known facts about the user: " + ", ".join(fact_strs))
+        except Exception:
+            pass
+
+        return "\n".join(context_parts)
+
     def _on_wake(self) -> None:
         """Handle wake word trigger: listen for command and execute."""
         t0 = time.perf_counter()
@@ -88,11 +137,8 @@ class WakeListener:
             tts.speak("Yes?")
         t_greeted = time.perf_counter()
         print(f"[Roamin] t={t_greeted - t0:.3f}s  'Yes?' spoken")
-        t_greeted = time.perf_counter()
-        print(f"[Roamin] t={t_greeted - t0:.3f}s  'Yes?' spoken")
 
         # STT — record and transcribe
-        stt = SpeechToText()
         transcription = None
         try:
             transcription = stt.record_and_transcribe(duration_seconds=5)
@@ -106,6 +152,11 @@ class WakeListener:
                 tts.speak("Sorry, I didn't catch that.")
             return
 
+        # Memory — extract facts and build context before AgentLoop
+        memory = MemoryManager()
+        fact_stored = self._extract_and_store_fact(transcription, memory)
+        memory_context = self._build_memory_context(transcription, memory)
+
         # AgentLoop
         result = {}
         try:
@@ -118,22 +169,22 @@ class WakeListener:
         t_agent = time.perf_counter()
         print(f"[Roamin] t={t_agent - t0:.3f}s  AgentLoop done (+{t_agent - t_stt:.3f}s) status={result.get('status')}")
 
-        # Generate reply via ModelRouter
-        reply = "Done."
+        # Generate reply with memory context injected
+        reply = "Got it." if fact_stored else "Done."
         status = result.get("status", "unknown")
         if status == "completed":
             try:
                 router = ModelRouter()
+                system_content = (
+                    "You are Roamin, a voice assistant. "
+                    "Reply in ONE short sentence, spoken naturally. "
+                    "No narration, no lists, no internal state. "
+                    "Just a direct natural reply."
+                )
+                if memory_context:
+                    system_content += f"\n\n{memory_context}"
                 messages = [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are Roamin, a voice assistant. "
-                            "Reply in ONE short sentence, spoken naturally. "
-                            "No narration, no lists, no internal state. "
-                            "Just a direct natural reply."
-                        ),
-                    },
+                    {"role": "system", "content": system_content},
                     {"role": "user", "content": transcription},
                 ]
                 reply = router.respond(
@@ -145,15 +196,13 @@ class WakeListener:
                     no_think=True,
                 )
                 reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
-                reply = reply[:200] if reply else "Done."
+                reply = reply[:200] if reply else ("Got it." if fact_stored else "Done.")
             except Exception:
-                reply = "Done."
+                reply = "Got it." if fact_stored else "Done."
         elif status == "failed":
             reply = "I couldn't complete that task."
         elif status == "blocked":
             reply = "That action needs your approval."
-        else:
-            reply = "Working on it."
         t_reply = time.perf_counter()
         print(f"[Roamin] t={t_reply - t0:.3f}s  Reply generated (+{t_reply - t_agent:.3f}s) → '{reply}'")
 
@@ -164,9 +213,8 @@ class WakeListener:
         print(f"[Roamin] t={t_spoken - t0:.3f}s  Reply spoken (+{t_spoken - t_reply:.3f}s)")
         print(f"[Roamin] TOTAL: {t_spoken - t0:.3f}s")
 
-        # Store in memory
+        # Store conversation in memory
         try:
-            memory = MemoryManager()
             memory.write_to_memory(
                 "conversation",
                 {"session_id": "voice_interface", "model_used": "whisper", "content": f"User: {transcription}"},
