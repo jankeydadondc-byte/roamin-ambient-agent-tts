@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 try:
     import sounddevice as sd
 except ImportError:
@@ -36,7 +34,7 @@ class SpeechToText:
         Record audio and transcribe using Whisper.
 
         Records at 16000Hz sample rate for duration_seconds.
-        Saves to temp file and transcribes.
+        Passes numpy array directly to Whisper (no temp file, no ffmpeg).
 
         Args:
             duration_seconds: Duration of recording (default 5 seconds)
@@ -51,28 +49,14 @@ class SpeechToText:
         sample_rate = 16000
 
         try:
-            # Record audio
+            # Record audio as float32 for direct Whisper compatibility
             print(f"[Roamin] Listening for {duration_seconds} seconds...")
-            recording = sd.rec(int(duration_seconds * sample_rate), samplerate=sample_rate, channels=1, dtype="int16")
+            recording = sd.rec(int(duration_seconds * sample_rate), samplerate=sample_rate, channels=1, dtype="float32")
             sd.wait()  # Wait for recording to complete
 
-            # Save to temporary WAV file
-            temp_dir = Path(__file__).parent / "tmp"
-            temp_dir.mkdir(exist_ok=True)
-            temp_file = temp_dir / "recording.wav"
-
-            import wave
-
-            import numpy as np
-
-            with wave.open(str(temp_file), "w") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)  # 16-bit
-                wf.setframerate(sample_rate)
-                wf.writeframes(recording.astype(np.int16).tobytes())
-
-            # Transcribe with Whisper
-            result = self._model.transcribe(str(temp_file))
+            # Flatten and pass directly to Whisper (no WAV file, no ffmpeg)
+            audio = recording.flatten()
+            result = self._model.transcribe(audio)
             text = result.get("text", "").strip()
 
             return text if text else None
