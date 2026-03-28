@@ -18,8 +18,74 @@ from agent.core.voice.stt import SpeechToText
 from agent.core.voice.tts import TextToSpeech
 
 
+def _classify_think_level(text: str) -> tuple[bool, int]:
+    """Classify how much thinking Roamin should do for this prompt.
+
+    Returns:
+        (no_think: bool, max_tokens: int)
+        OFF  (no_think=True,  max_tokens=60)   — default, simple queries
+        LOW  (no_think=False, max_tokens=512)  — basic think triggers
+        MED  (no_think=False, max_tokens=2048) — explicit think hard requests
+        HIGH (no_think=False, max_tokens=8192) — max effort requests
+    """
+    lower = text.lower()
+
+    high_triggers = [
+        "max thinking",
+        "max effort",
+        "think really hard",
+        "this is important",
+        "don't mess this up",
+        "dont mess this up",
+        "don't fuck this up",
+        "dont fuck this up",
+        "give it everything",
+        "full effort",
+    ]
+    if any(t in lower for t in high_triggers):
+        return False, 8192
+
+    med_triggers = [
+        "really think",
+        "think hard",
+        "think carefully",
+        "think through carefully",
+        "think deeply",
+        "take your time",
+        "be thorough",
+    ]
+    if any(t in lower for t in med_triggers):
+        return False, 2048
+
+    low_triggers = [
+        "think about",
+        "think through",
+        "analyze",
+        "analyse",
+        "explain why",
+        "explain how",
+        "reason through",
+        "figure out",
+        "what do you think",
+        "should i",
+        "help me decide",
+        "compare",
+        "pros and cons",
+        "difference between",
+        "how does",
+        "why does",
+        "why is",
+        "why are",
+        "what would",
+        "what if",
+    ]
+    if any(t in lower for t in low_triggers):
+        return False, 512
+
+    return True, 60
+
+
 class WakeListener:
-    """Listen for hotkey trigger to activate voice interface."""
 
     def __init__(
         self,
@@ -187,13 +253,15 @@ class WakeListener:
                     {"role": "system", "content": system_content},
                     {"role": "user", "content": transcription},
                 ]
+                no_think, think_max_tokens = _classify_think_level(transcription)
+                print(f"[Roamin] Think level: no_think={no_think}, max_tokens={think_max_tokens}")
                 reply = router.respond(
                     "default",
                     transcription,
                     messages=messages,
-                    max_tokens=60,
-                    temperature=0.7,
-                    no_think=True,
+                    max_tokens=think_max_tokens,
+                    temperature=0.6 if not no_think else 0.7,
+                    no_think=no_think,
                 )
                 reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
                 reply = reply[:200] if reply else ("Got it." if fact_stored else "Done.")
