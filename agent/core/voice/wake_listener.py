@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 
 try:
@@ -11,6 +12,7 @@ except ImportError:
 
 from agent.core.agent_loop import AgentLoop
 from agent.core.memory import MemoryManager
+from agent.core.model_router import ModelRouter
 from agent.core.voice.stt import SpeechToText
 from agent.core.voice.tts import TextToSpeech
 
@@ -95,10 +97,32 @@ class WakeListener:
                 status = result.get("status", "unknown")
 
                 if status == "completed":
-                    steps = result.get("steps", [{}])
-                    first_step = steps[0] if steps else {}
-                    outcome = first_step.get("outcome", "")
-                    reply = f"Done. {outcome[:100]}"
+                    try:
+                        router = ModelRouter()
+                        messages = [
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You are Roamin, a voice assistant. "
+                                    "Reply in ONE short sentence, spoken naturally. "
+                                    "No narration, no lists, no internal state. "
+                                    "Just a direct natural reply."
+                                ),
+                            },
+                            {"role": "user", "content": transcription},
+                        ]
+                        reply = router.respond(
+                            "default",
+                            transcription,
+                            messages=messages,
+                            max_tokens=60,
+                            temperature=0.7,
+                        )
+                        # Strip reasoning tokens and clean up
+                        reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+                        reply = reply[:200] if reply else "Done."
+                    except Exception:
+                        reply = "Done."
                 elif status == "failed":
                     reply = "I couldn't complete that task."
                 elif status == "blocked":
