@@ -36,7 +36,7 @@ _CACHE_DIR = Path(__file__).parent / "phrase_cache"
 # Pre-defined phrases to cache as WAV files at startup.
 # Speak these instantly without hitting Chatterbox API.
 CACHED_PHRASES: list[str] = [
-    "Yeah?",
+    "yes? how can i help you",
     "Done.",
     "Sorry, I didn't catch that.",
     "Working on it.",
@@ -54,7 +54,7 @@ CACHED_PHRASES: list[str] = [
 # Per-phrase synthesis overrides — tune exaggeration/cfg_weight per phrase
 # Default: exaggeration=0.5, cfg_weight=0.5
 PHRASE_PARAMS: dict[str, dict] = {
-    "Yeah?": {"exaggeration": 0.6, "cfg_weight": 0.4},
+    "yes? how can i help you": {"exaggeration": 0.6, "cfg_weight": 0.4},
     "On it.": {"exaggeration": 0.6, "cfg_weight": 0.4},
     "Got it.": {"exaggeration": 0.6, "cfg_weight": 0.4},
 }

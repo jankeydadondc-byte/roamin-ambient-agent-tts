@@ -134,7 +134,7 @@ class WakeListener:
 
         # Greet user
         if tts.is_available():
-            tts.speak("Yeah?")
+            tts.speak("yes? how can i help you")
         t_greeted = time.perf_counter()
         print(f"[Roamin] t={t_greeted - t0:.3f}s  'Yes?' spoken")
 
