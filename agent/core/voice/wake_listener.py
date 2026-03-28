@@ -21,9 +21,19 @@ from agent.core.voice.tts import TextToSpeech
 class WakeListener:
     """Listen for hotkey trigger to activate voice interface."""
 
-    def __init__(self, hotkey: str = "ctrl+space") -> None:
+    def __init__(
+        self,
+        hotkey: str = "ctrl+space",
+        stt: SpeechToText | None = None,
+        tts: TextToSpeech | None = None,
+        agent_loop: AgentLoop | None = None,
+    ) -> None:
         self._hotkey = hotkey
         self.is_running = False
+        # Use pre-loaded instances if provided, else lazy-load on first wake
+        self._stt = stt
+        self._tts = tts
+        self._agent_loop = agent_loop
 
         if keyboard is None:
             print("[Warning] WakeListener not available (keyboard import failed)")
@@ -68,10 +78,16 @@ class WakeListener:
         t0 = time.perf_counter()
         print("[Roamin] Wake triggered at t=0.000")
 
+        # Use pre-loaded instances or lazy-load if not provided
+        tts = self._tts or TextToSpeech()
+        stt = self._stt or SpeechToText()
+        agent_loop = self._agent_loop or AgentLoop()
+
         # Greet user
-        tts = TextToSpeech()
         if tts.is_available():
             tts.speak("Yes?")
+        t_greeted = time.perf_counter()
+        print(f"[Roamin] t={t_greeted - t0:.3f}s  'Yes?' spoken")
         t_greeted = time.perf_counter()
         print(f"[Roamin] t={t_greeted - t0:.3f}s  'Yes?' spoken")
 
@@ -93,7 +109,6 @@ class WakeListener:
         # AgentLoop
         result = {}
         try:
-            agent_loop = AgentLoop()
             result = agent_loop.run(transcription)
         except Exception as e:
             print(f"[Warning] AgentLoop error: {e}")
