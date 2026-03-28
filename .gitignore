@@ -18,6 +18,7 @@ logs/
 *.db
 *.sqlite
 chroma_db/
+agent/core/voice/phrase_cache/
 
 # Secrets
 *.vault

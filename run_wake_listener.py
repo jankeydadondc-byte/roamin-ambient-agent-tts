@@ -74,7 +74,7 @@ def _warmup(stt: SpeechToText, tts: TextToSpeech, agent_loop: AgentLoop) -> None
 
     # Trigger Chatterbox warmup with a silent short phrase
     try:
-        tts.speak(".")
+        tts.warm_phrase_cache()
         print(f"[Roamin] TTS warm ({time.perf_counter() - t0:.1f}s)")
     except Exception as e:
         print(f"[Roamin] TTS warmup failed (non-fatal): {e}")
