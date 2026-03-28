@@ -117,6 +117,7 @@ class WakeListener:
                             messages=messages,
                             max_tokens=60,
                             temperature=0.7,
+                            no_think=True,
                         )
                         # Strip reasoning tokens and clean up
                         reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()

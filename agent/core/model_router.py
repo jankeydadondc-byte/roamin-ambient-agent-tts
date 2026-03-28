@@ -56,6 +56,7 @@ class ModelRouter:
         messages: list[dict] | None = None,
         max_tokens: int = 512,
         temperature: float = 0.7,
+        no_think: bool = False,
     ) -> str:
         """Generate a response for the given task using LlamaCppBackend (primary) or HTTP fallback.
 
@@ -84,6 +85,7 @@ class ModelRouter:
                     max_tokens=max_tokens,
                     temperature=temperature,
                     messages=messages,
+                    no_think=no_think,
                 )
             else:
                 logger.debug(

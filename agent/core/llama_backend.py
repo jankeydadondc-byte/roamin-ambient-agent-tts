@@ -6,8 +6,8 @@ via llama-cpp-python. All model paths are validated at runtime, not import time.
 
 from __future__ import annotations
 
-from pathlib import Path
 import threading
+from pathlib import Path
 
 # Import guard: deferred error if llama-cpp-python is missing
 try:
@@ -141,6 +141,7 @@ class LlamaCppBackend:
         max_tokens: int = 512,
         temperature: float = 0.7,
         stop: list[str] | None = None,
+        no_think: bool = False,
     ) -> str:
         """Generate a chat completion from a message list.
 
@@ -161,7 +162,7 @@ class LlamaCppBackend:
             raise RuntimeError("Model must be loaded before calling chat().")
 
         # Convert message dicts to llama-cpp format
-        prompt = self._format_messages_as_prompt(messages)
+        prompt = self._format_messages_as_prompt(messages, no_think=no_think)
 
         response = self._llm(
             prompt=prompt,
@@ -212,7 +213,7 @@ class LlamaCppBackend:
         completion = response["choices"][0]["text"]
         return completion.strip()
 
-    def _format_messages_as_prompt(self, messages: list[dict]) -> str:
+    def _format_messages_as_prompt(self, messages: list[dict], no_think: bool = False) -> str:
         """Convert message list to ChatML prompt format for Qwen3/DeepSeek models.
 
         Format:
@@ -221,6 +222,11 @@ class LlamaCppBackend:
             <|im_start|>user
             {user_content}<|im_end|>
             <|im_start|>assistant
+
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys.
+            no_think: If True, suppress Qwen3 thinking mode by pre-filling
+                      the assistant turn with an empty think block.
         """
         if not messages:
             return ""
@@ -237,7 +243,9 @@ class LlamaCppBackend:
             else:  # user or unknown
                 formatted_parts.append("<|im_start|>user\n" + content + "<|im_end|>")
 
-        return "\n".join(formatted_parts) + "\n<|im_start|>assistant\n"
+        return (
+            "\n".join(formatted_parts) + "\n<|im_start|>assistant\n" + ("<think>\n\n</think>\n\n" if no_think else "")
+        )
 
 
 class ModelRegistry:
@@ -342,6 +350,7 @@ def get_llm_response(
     max_tokens: int = 512,
     temperature: float = 0.7,
     messages: list[dict] | None = None,
+    no_think: bool = False,
 ) -> str:
     """Get LLM response using in-process inference.
 
@@ -359,9 +368,8 @@ def get_llm_response(
         RuntimeError: If model loading fails or llama-cpp-python unavailable.
     """
     if messages is not None:
-        # Chat mode
         backend = _REGISTRY.get_backend(capability)
-        return backend.chat(messages, max_tokens=max_tokens, temperature=temperature)
+        return backend.chat(messages, max_tokens=max_tokens, temperature=temperature, no_think=no_think)
 
     # Generation mode
     backend = _REGISTRY.get_backend(capability)
