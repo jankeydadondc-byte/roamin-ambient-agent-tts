@@ -8,9 +8,9 @@ Extracted from monolithic bridge during module split refactor.
 import datetime
 import logging
 import logging.handlers
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from agent.core.paths import get_project_root

@@ -33,4 +33,7 @@ _test_*.py
 _audit_*.py
 _commit_*.bat
 _check_*.bat
+_check_*.py
+_install_*.bat
+_init_push.bat
 *.tmp

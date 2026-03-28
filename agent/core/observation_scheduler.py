@@ -1,8 +1,8 @@
 """observation_scheduler.py — Periodic screen observation with notifications."""
 
-from datetime import datetime
 import threading
 import time
+from datetime import datetime
 
 try:
     from PIL import ImageGrab

@@ -1,11 +1,11 @@
 """screen_observer.py — Captures screen, sends to vision model, stores observation."""
 
 import base64
-from datetime import datetime
-from pathlib import Path
 import subprocess
 import threading
 import time
+from datetime import datetime
+from pathlib import Path
 
 try:
     from PIL import ImageGrab
