@@ -48,10 +48,20 @@ def handle_signal(signum: int, frame: object | None) -> None:
 
 def main() -> None:
     """Main entry point with single-instance guard and cleanup."""
-    # Configure logging
+    log_dir = LOCK_FILE.parent
+    log_dir.mkdir(exist_ok=True)
+    log_path = log_dir / "wake_listener.log"
+
+    # Redirect stdout and stderr to log file (pythonw has no console)
+    log_file = open(log_path, "a", buffering=1, encoding="utf-8")  # noqa: SIM115
+    sys.stdout = log_file
+    sys.stderr = log_file
+
+    # Configure logging to same file
     logging.basicConfig(
-        level=logging.WARNING,
+        level=logging.DEBUG,
         format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[logging.StreamHandler(log_file)],
     )
 
     # Check for existing lock file and valid PID
