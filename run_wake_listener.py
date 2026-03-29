@@ -99,7 +99,7 @@ def main() -> None:
         format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[logging.StreamHandler(log_file)],
     )
-    for noisy in ("comtypes", "urllib3", "httpx", "chromadb", "posthog"):
+    for noisy in ("comtypes", "urllib3", "httpx", "chromadb", "posthog", "primp", "ddgs"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     # Single-instance guard
