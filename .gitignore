@@ -41,3 +41,7 @@ cleanup.bat
 *.tmp
 *.bak*
 agent/core/voice/tmp/
+
+# Claude Code worktrees
+.claude/
+workspace/
