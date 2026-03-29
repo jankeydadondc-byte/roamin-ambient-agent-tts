@@ -97,7 +97,7 @@ class AgentLoop:
             return "vision"
         if any(w in goal_lower for w in ["code", "program", "script", "function", "debug", "fix"]):
             return "code"
-        if any(w in goal_lower for w in ["reason", "think", "analyze", "why", "explain"]):
+        if any(w in goal_lower for w in ["reason", "analyze", "analyse"]):
             return "reasoning"
         return "default"
 
