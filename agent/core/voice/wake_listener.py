@@ -174,15 +174,18 @@ class WakeListener:
         except Exception:
             pass
 
-        # Pull all named facts (small table, load all)
+        # Pull all named facts — only inject ones relevant to this query
         try:
             from agent.core.memory.memory_store import MemoryStore
 
             store = MemoryStore()
             facts = store.get_all_named_facts() if hasattr(store, "get_all_named_facts") else []
             if facts:
-                fact_strs = [f"{f['fact_name']}: {f['value']}" for f in facts]
-                context_parts.append("Known facts about the user: " + ", ".join(fact_strs))
+                lower_query = transcription.lower()
+                relevant = [f for f in facts if f["fact_name"].lower() in lower_query]
+                if relevant:
+                    fact_strs = [f"{f['fact_name']}: {f['value']}" for f in relevant]
+                    context_parts.append("Known facts about the user: " + ", ".join(fact_strs))
         except Exception:
             pass
 
@@ -273,6 +276,15 @@ class WakeListener:
             reply = "That action needs your approval."
         t_reply = time.perf_counter()
         print(f"[Roamin] t={t_reply - t0:.3f}s  Reply generated (+{t_reply - t_agent:.3f}s) → '{reply}'")
+
+        # Release GPU before TTS synthesis to free VRAM for Chatterbox
+        try:
+            from agent.core.llama_backend import _REGISTRY
+
+            _REGISTRY.unload_all()
+            print("[Roamin] GPU released for TTS")
+        except Exception:
+            pass
 
         # TTS — speak reply
         if tts.is_available():
