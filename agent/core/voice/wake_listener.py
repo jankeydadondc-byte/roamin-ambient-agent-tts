@@ -334,6 +334,7 @@ class WakeListener:
             print(f"[Roamin] t={t_dispatch - t0:.3f}s  Direct dispatch (+{t_dispatch - t_stt:.3f}s)")
             if direct_result.get("success"):
                 tool_context = direct_result["result"][:1500]
+                tool_context = tool_context.encode("ascii", errors="ignore").decode("ascii")
             else:
                 tool_context = direct_result.get("error", "tool failed")
         else:

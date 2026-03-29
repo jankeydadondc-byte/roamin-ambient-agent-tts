@@ -88,6 +88,9 @@ def main() -> None:
     log_dir.mkdir(exist_ok=True)
     log_path = log_dir / "wake_listener.log"
 
+    # Suppress Rust/primp TLS debug output (bypasses Python logging)
+    os.environ.setdefault("RUST_LOG", "warn")
+
     # Redirect stdout/stderr to log file (pythonw has no console)
     log_file = open(log_path, "a", buffering=1, encoding="utf-8")  # noqa: SIM115
     sys.stdout = log_file
