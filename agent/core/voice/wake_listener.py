@@ -67,7 +67,6 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
         "reason through",
         "figure out",
         "what do you think",
-        "should i",
         "help me decide",
         "compare",
         "pros and cons",
@@ -267,6 +266,7 @@ class WakeListener:
                     no_think=no_think,
                 )
                 reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+                reply = re.sub(r"[^\x00-\x7F]+", "", reply).strip()  # Strip non-ASCII (emojis)
                 reply = reply[:200] if reply else ("Got it." if fact_stored else "Done.")
             except Exception:
                 reply = "Got it." if fact_stored else "Done."
