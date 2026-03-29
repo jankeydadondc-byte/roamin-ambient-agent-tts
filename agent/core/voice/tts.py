@@ -88,18 +88,22 @@ def _synthesize_to_file(text: str, url: str, dest: Path, exaggeration: float = 0
     """Synthesize text via Chatterbox and save WAV to dest. Returns True on success."""
     if _requests is None:
         return False
-    try:
-        payload: dict = {"input": text, "exaggeration": exaggeration, "cfg_weight": cfg_weight}
-        if _VOICE_SAMPLE.exists():
-            payload["voice"] = "voice-sample"
-        timeout = min(30 + len(text) // 10, 120)
-        r = _requests.post(f"{url}/v1/audio/speech", json=payload, timeout=timeout)
-        r.raise_for_status()
-        dest.write_bytes(r.content)
-        return True
-    except Exception as e:
-        print(f"[TTS] Cache synthesis failed for '{text[:30]}': {e}")
-        return False
+    for attempt in range(2):
+        try:
+            payload: dict = {"input": text, "exaggeration": exaggeration, "cfg_weight": cfg_weight}
+            if _VOICE_SAMPLE.exists():
+                payload["voice"] = "voice-sample"
+            timeout = min(30 + len(text) // 10, 120)
+            r = _requests.post(f"{url}/v1/audio/speech", json=payload, timeout=timeout)
+            r.raise_for_status()
+            dest.write_bytes(r.content)
+            return True
+        except Exception as e:
+            if attempt == 0:
+                print(f"[TTS] Synthesis attempt 1 failed for '{text[:30]}': {e} — retrying...")
+            else:
+                print(f"[TTS] Synthesis failed after retry for '{text[:30]}': {e}")
+    return False
 
 
 class TextToSpeech:
