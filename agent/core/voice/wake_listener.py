@@ -415,16 +415,6 @@ class WakeListener:
         t_reply = time.perf_counter()
         print(f"[Roamin] t={t_reply - t0:.3f}s  Reply generated (+{t_reply - t_stt:.3f}s) → '{reply}'")
 
-        # Release GPU before TTS synthesis to free VRAM for Chatterbox
-        try:
-            from agent.core.llama_backend import _REGISTRY
-
-            _REGISTRY.unload_all()
-            time.sleep(0.5)
-            print("[Roamin] GPU released for TTS")
-        except Exception:
-            pass
-
         # TTS — speak reply
         if tts.is_available():
             tts.speak(reply)
