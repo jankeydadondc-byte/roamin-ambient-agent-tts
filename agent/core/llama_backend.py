@@ -130,6 +130,15 @@ class LlamaCppBackend:
             self._llm.close()
             self._llm = None
         self._loaded = False
+        # Release CUDA memory back to OS so other processes (e.g. Chatterbox) can allocate
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except Exception:
+            pass
 
     def is_loaded(self) -> bool:
         """Check if the model is currently loaded in memory."""

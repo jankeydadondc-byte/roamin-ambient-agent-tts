@@ -282,6 +282,7 @@ class WakeListener:
             from agent.core.llama_backend import _REGISTRY
 
             _REGISTRY.unload_all()
+            time.sleep(0.5)  # Give CUDA time to release memory
             print("[Roamin] GPU released for TTS")
         except Exception:
             pass
