@@ -331,6 +331,7 @@ class ModelRegistry:
             try:
                 backend = LlamaCppBackend(
                     model_path=model_path,
+                    n_gpu_layers=32,  # Leave ~4GB headroom for Chatterbox TTS
                     mmproj_path=mmproj_path,
                 )
                 backend.load()
