@@ -39,6 +39,11 @@ MINISTRAL_14B = Path(
 )
 MINISTRAL_14B = MINISTRAL_14B if MINISTRAL_14B.exists() else None
 
+MINISTRAL_14B_MMPROJ = Path(
+    r"C:\Users\Asherre Roamin\.lmstudio\models\lmstudio-community\Ministral-3-14B-Reasoning-2512-GGUF\mmproj-Ministral-3-14B-Reasoning-2512-F16.gguf"  # noqa: E501
+)
+MINISTRAL_14B_MMPROJ = MINISTRAL_14B_MMPROJ if MINISTRAL_14B_MMPROJ.exists() else None
+
 QWEN3_CODER_NEXT = Path(
     r"C:\Users\Asherre Roamin\.lmstudio\models\lmstudio-community\Qwen3-Coder-Next-GGUF\Qwen3-Coder-Next-Q4_K_M.gguf"
 )
@@ -46,15 +51,23 @@ QWEN3_CODER_NEXT = QWEN3_CODER_NEXT if QWEN3_CODER_NEXT.exists() else None
 
 
 CAPABILITY_MAP: dict[str, Path | None] = {
+    # Qwen3 8B — default fast model for voice replies
     "default": QWEN3_8B,
     "chat": QWEN3_8B,
     "fast": QWEN3_8B,
+    # Qwen3.5 9B — vision/screen reading
     "vision": QWEN35_9B,
     "screen_reading": QWEN35_9B,
+    # DeepSeek R1 8B — deep reasoning
     "reasoning": DEEPSEEK_R1_8B,
     "analysis": DEEPSEEK_R1_8B,
+    # Qwen3 Coder Next 80B — heavy code tasks (requires full 24GB+ VRAM)
     "code": QWEN3_CODER_NEXT,
     "heavy_code": QWEN3_CODER_NEXT,
+    # Ministral 3 14B — vision + reasoning in one model
+    "ministral": MINISTRAL_14B,
+    "ministral_vision": MINISTRAL_14B,
+    "ministral_reasoning": MINISTRAL_14B,
 }
 
 
@@ -223,38 +236,57 @@ class LlamaCppBackend:
         return completion.strip()
 
     def _format_messages_as_prompt(self, messages: list[dict], no_think: bool = False) -> str:
-        """Convert message list to ChatML prompt format for Qwen3/DeepSeek models.
+        """Convert message list to prompt format appropriate for the loaded model.
 
-        Format:
-            <|im_start|>system
-            {system_content}<|im_end|>
-            <|im_start|>user
-            {user_content}<|im_end|>
-            <|im_start|>assistant
-
-        Args:
-            messages: List of message dicts with 'role' and 'content' keys.
-            no_think: If True, suppress Qwen3 thinking mode by pre-filling
-                      the assistant turn with an empty think block.
+        Detects model family from path and applies correct template:
+        - Qwen3/DeepSeek: ChatML (<|im_start|> tokens)
+        - Ministral/Mistral: Instruct format ([INST] tokens)
         """
         if not messages:
             return ""
 
+        # Detect model family from path
+        model_name = str(self.model_path).lower()
+        is_mistral = any(x in model_name for x in ("mistral", "ministral"))
+
+        if is_mistral:
+            return self._format_mistral(messages)
+        return self._format_chatml(messages, no_think=no_think)
+
+    def _format_chatml(self, messages: list[dict], no_think: bool = False) -> str:
+        """ChatML format for Qwen3/DeepSeek models."""
         formatted_parts = []
         for msg in messages:
             role = msg.get("role", "user")
             content = msg.get("content", "")
-
             if role == "system":
                 formatted_parts.append("<|im_start|>system\n" + content + "<|im_end|>")
             elif role == "assistant":
                 formatted_parts.append("<|im_start|>assistant\n" + content + "<|im_end|>")
-            else:  # user or unknown
+            else:
                 formatted_parts.append("<|im_start|>user\n" + content + "<|im_end|>")
-
         return (
             "\n".join(formatted_parts) + "\n<|im_start|>assistant\n" + ("<think>\n\n</think>\n\n" if no_think else "")
         )
+
+    def _format_mistral(self, messages: list[dict]) -> str:
+        """Instruct format for Ministral/Mistral models."""
+        system_content = ""
+        turns = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "system":
+                system_content = content
+            elif role == "user":
+                if system_content:
+                    turns.append(f"[INST] {system_content}\n{content} [/INST]")
+                    system_content = ""
+                else:
+                    turns.append(f"[INST] {content} [/INST]")
+            elif role == "assistant":
+                turns.append(content)
+        return " ".join(turns)
 
 
 class ModelRegistry:
@@ -314,6 +346,8 @@ class ModelRegistry:
             mmproj_path: Path | None = None
             if capability in ("vision", "screen_reading"):
                 mmproj_path = QWEN35_9B_MMPROJ
+            elif capability in ("ministral_vision",):
+                mmproj_path = MINISTRAL_14B_MMPROJ
 
             # If same model already loaded, return it
             if (
