@@ -122,7 +122,7 @@ class ModelRouter:
                     "stream": False,
                 }
 
-            response = requests.post(url, json=payload, timeout=60)
+            response = requests.post(url, json=payload, timeout=5)
             response.raise_for_status()
 
             data = response.json()
