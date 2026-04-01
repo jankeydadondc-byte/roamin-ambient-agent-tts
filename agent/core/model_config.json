@@ -1,8 +1,20 @@
 {
   "models": [
     {
+      "id": "qwen3-vl-8b-abliterated",
+      "name": "Qwen3-VL-8B Abliterated v2",
+      "provider": "llama_cpp",
+      "model_id": "Qwen3-VL-8B-Instruct-abliterated-v2.Q4_K_M.gguf",
+      "endpoint": "local://llama_cpp",
+      "size_gb": 4.7,
+      "capabilities": ["fast", "general", "chat", "vision", "screen_reading"],
+      "context_window": 8192,
+      "always_available": true,
+      "notes": "Unified default model: chat + vision + fast. Abliterated (uncensored). Q4_K_M quantization."
+    },
+    {
       "id": "qwen3-8b-ollama",
-      "name": "Qwen3 8B",
+      "name": "Qwen3 8B (legacy fallback)",
       "provider": "ollama",
       "model_id": "qwen3:8b",
       "endpoint": "http://127.0.0.1:11434",
@@ -21,29 +33,6 @@
       "capabilities": ["code", "reasoning", "tool_calling"],
       "context_window": 32768,
       "always_available": true
-    },
-    {
-      "id": "qwen35-9b-lmstudio",
-      "name": "Qwen3.5 9B",
-      "provider": "lmstudio",
-      "model_id": "lmstudio-community/Qwen3.5-9B-GGUF/Qwen3.5-9B-Q4_K_M.gguf",
-      "endpoint": "http://127.0.0.1:1234",
-      "size_gb": 6.1,
-      "capabilities": ["vision", "fast", "tool_calling", "screen_reading"],
-      "context_window": 32768,
-      "always_available": false
-    },
-    {
-      "id": "qwen3-coder-next-lmstudio",
-      "name": "Qwen3 Coder Next 80B",
-      "provider": "lmstudio",
-      "model_id": "lmstudio-community/Qwen3-Coder-Next-GGUF/Qwen3-Coder-Next-Q4_K_M.gguf",
-      "endpoint": "http://127.0.0.1:1234",
-      "size_gb": 45.0,
-      "capabilities": ["code", "heavy_reasoning"],
-      "context_window": 32768,
-      "always_available": false,
-      "requires_manual_load": true
     },
     {
       "id": "deepseek-r1-8b-lmstudio",
@@ -66,18 +55,30 @@
       "capabilities": ["reasoning"],
       "context_window": 32768,
       "always_available": false
+    },
+    {
+      "id": "qwen3-coder-next-lmstudio",
+      "name": "Qwen3 Coder Next 80B",
+      "provider": "lmstudio",
+      "model_id": "lmstudio-community/Qwen3-Coder-Next-GGUF/Qwen3-Coder-Next-Q4_K_M.gguf",
+      "endpoint": "http://127.0.0.1:1234",
+      "size_gb": 45.0,
+      "capabilities": ["code", "heavy_reasoning"],
+      "context_window": 32768,
+      "always_available": false,
+      "requires_manual_load": true
     }
   ],
   "routing_rules": {
-    "vision": "qwen35-9b-lmstudio",
-    "screen_reading": "qwen35-9b-lmstudio",
+    "default": "qwen3-vl-8b-abliterated",
+    "chat": "qwen3-vl-8b-abliterated",
+    "fast": "qwen3-vl-8b-abliterated",
+    "vision": "qwen3-vl-8b-abliterated",
+    "screen_reading": "qwen3-vl-8b-abliterated",
     "code": "qwen3-coder-30b-ollama",
     "heavy_code": "qwen3-coder-next-lmstudio",
     "reasoning": "deepseek-r1-8b-lmstudio",
-    "analysis": "deepseek-r1-8b-lmstudio",
-    "fast": "qwen3-8b-ollama",
-    "chat": "qwen3-8b-ollama",
-    "default": "qwen3-8b-ollama"
+    "analysis": "deepseek-r1-8b-lmstudio"
   },
-  "fallback_chain": ["qwen3-8b-ollama", "qwen3-coder-30b-ollama"]
+  "fallback_chain": ["qwen3-vl-8b-abliterated", "qwen3-8b-ollama", "qwen3-coder-30b-ollama"]
 }

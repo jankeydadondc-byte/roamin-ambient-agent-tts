@@ -47,19 +47,22 @@
 - ✅ Screen observation fires correctly via direct dispatch
 - ✅ Screenshot saved to `workspace/screenshots/`
 - ✅ Vision model (Ministral 3 14B + mmproj) registered in CAPABILITY_MAP
+- ✅ **Default model upgraded to Qwen3-VL-8B abliterated (2026-04-01)**
+  - Unified model: chat + vision + fast in one 4.7GB GGUF (Q4_K_M, uncensored)
+  - Source: `prithivMLmods/Qwen3-VL-8B-Instruct-abliterated-v2-GGUF`
+  - mmproj: Q8_0 (718MB) for multimodal projection
+  - CAPABILITY_MAP routes default/chat/fast/vision/screen_reading to this model
+  - _MMPROJ_MAP auto-resolves mmproj per model path (no hardcoded capability checks)
+  - VRAM: 4.7GB model + 718MB mmproj vs old 14GB Qwen3 8B — frees ~9GB headroom
 
 ### Remaining Gap: Vision Routing (from "still needs work" #1)
 
-#### 1. Screen Observation Vision Routing (CRITICAL)
-- **Current state:** `take_screenshot()` fires, `ScreenObserver.observe()` exists but result is text passed to default model
-- **Problem:** Default model (Qwen3 8B) can't see images — responds "I can't see images"
-- **Solution:**
-  1. In direct dispatch: detect screenshot result type (has image bytes)
-  2. Re-route to `task='vision'` or call `router.respond(..., task='vision')`
-  3. Pass actual image bytes to llama_backend `chat()` with vision model loaded
-  4. Vision model returns description, inject into TTS reply
-- **Files:** `agent/core/voice/wake_listener.py` (lines 117-130), `agent/core/model_router.py`
-- **Test case:** ctrl+space → "what's on my screen" → should describe actual screen, not say "can't see"
+#### 1. Screen Observation Vision Routing — PARTIALLY ADDRESSED
+- **Previous state:** Default model (Qwen3 8B) had no vision — responded "I can't see images"
+- **Current state:** Default model (Qwen3-VL-8B) has native vision capability
+- **Remaining work:** Verify `take_screenshot()` passes image bytes correctly to llama_backend `chat()` with mmproj loaded. Direct dispatch pattern matching should now route vision queries to a capable model without special routing logic.
+- **Test case:** ctrl+space → "what's on my screen" → should describe actual screen content
+- **Status:** Pending manual end-to-end verification
 
 #### 2. Feature Readiness Checks
 - Pre-flight checks for vision dependencies (pyautogui, PIL, mmproj model loaded)
@@ -71,7 +74,7 @@
 - Prevents "vision mode" from trying to process text-only queries incorrectly
 - **Files:** `agent/core/agent_loop.py` (feature flag system)
 
-**Impact:** Core advertised feature works. User can ask "what am I looking at?" and get actual description.
+**Impact:** Core advertised feature now has a capable model. Pending manual verification of end-to-end image processing pipeline.
 
 ---
 
@@ -263,12 +266,16 @@
 - ✅ Log prune 40KB limit
 - ✅ Manual test passed: 4 wakes, all successful, thread guard confirmed
 
-### Phase 2: Vision (NEXT)
+### Phase 2: Vision (IN PROGRESS)
 **Estimated:** 1-2 days
 **Items:** Priority 2 (vision routing)
-1. Extend `llama_backend.chat()` to accept image bytes (currently text-only)
-2. Modify `take_screenshot()` or direct dispatch to pass image bytes to vision model
-3. Test: ctrl+space → "what's on my screen" → actual description
+- ✅ Downloaded Qwen3-VL-8B abliterated (Q4_K_M, 4.7GB) + mmproj (Q8_0, 718MB)
+- ✅ Updated CAPABILITY_MAP: default/chat/fast/vision/screen_reading → Qwen3-VL-8B
+- ✅ Added _MMPROJ_MAP for auto-resolving mmproj per model path
+- ✅ Updated model_config.json routing rules + fallback chain
+- ✅ Unit tests passed (CAPABILITY_MAP routing, file existence, mmproj lookup)
+- ⬜ Manual test: ctrl+space → "what's on my screen" → actual description
+- ⬜ Verify image bytes pipeline (take_screenshot → llama_backend.chat with mmproj)
 
 ### Phase 3: Task Scheduling (AFTER VISION)
 **Estimated:** 1-2 days
@@ -309,7 +316,7 @@
 - ✅ Structured error reporting (FIXED — resilience pass)
 - ✅ Fallback mechanisms (FIXED — resilience pass)
 - ✅ Double-launch race (FIXED — resilience pass)
-- Screen observation vision routing → NEXT
+- Screen observation vision routing → MODEL UPGRADED, pending manual e2e test
 
 ### High (Improve Reliability)
 - Task deduplication

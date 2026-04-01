@@ -16,11 +16,22 @@ except ImportError:
     Llama = None  # type: ignore
 
 # Model paths validated at runtime (not import time)
+# --- Primary: Qwen3-VL-8B abliterated (unified default + vision) ---
+_MODELS_DIR = Path(r"C:\AI\roamin-ambient-agent-tts\models")
+
+QWEN3_VL_8B = _MODELS_DIR / "Qwen3-VL-8B-Instruct-abliterated-v2.Q4_K_M.gguf"
+QWEN3_VL_8B = QWEN3_VL_8B if QWEN3_VL_8B.exists() else None
+
+QWEN3_VL_8B_MMPROJ = _MODELS_DIR / "Qwen3-VL-8B-Instruct-abliterated-v2.mmproj-Q8_0.gguf"
+QWEN3_VL_8B_MMPROJ = QWEN3_VL_8B_MMPROJ if QWEN3_VL_8B_MMPROJ.exists() else None
+
+# --- Legacy: Qwen3 8B (Ollama blob, text-only fallback) ---
 QWEN3_8B = Path(
     r"C:\Users\Asherre Roamin\.ollama\models\blobs\sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f"  # noqa: E501
 )
 QWEN3_8B = QWEN3_8B if QWEN3_8B.exists() else None
 
+# --- Qwen3.5 9B (legacy vision, kept for reference) ---
 QWEN35_9B = Path(
     r"C:\Users\Asherre Roamin\.lmstudio\models\lmstudio-community" r"\Qwen3.5-9B-GGUF\Qwen3.5-9B-Q4_K_M.gguf"
 )
@@ -31,9 +42,11 @@ QWEN35_9B_MMPROJ = Path(
 )
 QWEN35_9B_MMPROJ = QWEN35_9B_MMPROJ if QWEN35_9B_MMPROJ.exists() else None
 
+# --- DeepSeek R1 8B ---
 DEEPSEEK_R1_8B = Path(r"C:\Users\Asherre Roamin\.lmstudio\models" r"\DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf")
 DEEPSEEK_R1_8B = DEEPSEEK_R1_8B if DEEPSEEK_R1_8B.exists() else None
 
+# --- Ministral 3 14B ---
 MINISTRAL_14B = Path(
     r"C:\Users\Asherre Roamin\.lmstudio\models\lmstudio-community\Ministral-3-14B-Reasoning-2512-GGUF\Ministral-3-14B-Reasoning-2512-Q4_K_M.gguf"  # noqa: E501
 )
@@ -44,20 +57,26 @@ MINISTRAL_14B_MMPROJ = Path(
 )
 MINISTRAL_14B_MMPROJ = MINISTRAL_14B_MMPROJ if MINISTRAL_14B_MMPROJ.exists() else None
 
+# --- Qwen3 Coder Next 80B ---
 QWEN3_CODER_NEXT = Path(
     r"C:\Users\Asherre Roamin\.lmstudio\models\lmstudio-community\Qwen3-Coder-Next-GGUF\Qwen3-Coder-Next-Q4_K_M.gguf"
 )
 QWEN3_CODER_NEXT = QWEN3_CODER_NEXT if QWEN3_CODER_NEXT.exists() else None
 
+# --- mmproj lookup: maps model paths to their multimodal projection files ---
+_MMPROJ_MAP: dict[Path | None, Path | None] = {
+    QWEN3_VL_8B: QWEN3_VL_8B_MMPROJ,
+    QWEN35_9B: QWEN35_9B_MMPROJ,
+    MINISTRAL_14B: MINISTRAL_14B_MMPROJ,
+}
 
 CAPABILITY_MAP: dict[str, Path | None] = {
-    # Qwen3 8B — default fast model for voice replies
-    "default": QWEN3_8B,
-    "chat": QWEN3_8B,
-    "fast": QWEN3_8B,
-    # Qwen3.5 9B — vision/screen reading
-    "vision": QWEN35_9B,
-    "screen_reading": QWEN35_9B,
+    # Qwen3-VL-8B abliterated — unified default: chat + vision + fast (4.7GB, uncensored)
+    "default": QWEN3_VL_8B,
+    "chat": QWEN3_VL_8B,
+    "fast": QWEN3_VL_8B,
+    "vision": QWEN3_VL_8B,
+    "screen_reading": QWEN3_VL_8B,
     # DeepSeek R1 8B — deep reasoning
     "reasoning": DEEPSEEK_R1_8B,
     "analysis": DEEPSEEK_R1_8B,
@@ -343,11 +362,7 @@ class ModelRegistry:
                 )
 
             # Determine required multimodal projection (if any)
-            mmproj_path: Path | None = None
-            if capability in ("vision", "screen_reading"):
-                mmproj_path = QWEN35_9B_MMPROJ
-            elif capability in ("ministral_vision",):
-                mmproj_path = MINISTRAL_14B_MMPROJ
+            mmproj_path: Path | None = _MMPROJ_MAP.get(model_path)
 
             # If same model already loaded, return it
             if (

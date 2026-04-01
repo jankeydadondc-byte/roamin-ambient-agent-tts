@@ -66,21 +66,23 @@ C:\AI\roamin-ambient-agent-tts\
 
 | Capability key(s) | Model | File size | VRAM | Notes |
 |---|---|---|---|---|
-| default, chat, fast | Qwen3 8B Q4 | 4.9GB | ~14GB | Default voice — 83 t/s |
-| vision, screen_reading | Qwen3.5 9B Q4 + mmproj | 5.2GB + 0.9GB | ~6GB | Has vision projector |
+| **default, chat, fast, vision, screen_reading** | **Qwen3-VL-8B Abliterated v2 Q4_K_M + mmproj** | **4.7GB + 718MB** | **~5.4GB** | **NEW DEFAULT (2026-04-01): unified chat+vision, uncensored** |
 | reasoning, analysis | DeepSeek R1 8B Q4 | 4.7GB | ~5GB | Deep think tasks |
 | ministral, ministral_reasoning | Ministral 3 14B Q4 | 7.7GB | ~8GB | Vision + reasoning |
 | ministral_vision | Ministral 3 14B Q4 + mmproj | 7.7GB + 0.8GB | ~9GB | Ministral with screen |
 | code, heavy_code | Qwen3 Coder Next 80B Q4 | 45.2GB | >24GB | CPU offload only |
+| (legacy fallback) | Qwen3 8B Q4 | 4.9GB | ~14GB | Old default, kept as HTTP fallback |
 
 Model paths (all GGUF, all validated at runtime):
-- Qwen3 8B: C:\Users\Asherre Roamin\.ollama\models\blobs\sha256-a3de86cd...
-- Qwen3.5 9B: ..\.lmstudio\models\lmstudio-community\Qwen3.5-9B-GGUF\Qwen3.5-9B-Q4_K_M.gguf
-- Qwen3.5 mmproj: ..\.lmstudio\models\lmstudio-community\Qwen3.5-9B-GGUF\mmproj-Qwen3.5-9B-BF16.gguf
+- **Qwen3-VL-8B (DEFAULT):** C:\AI\roamin-ambient-agent-tts\models\Qwen3-VL-8B-Instruct-abliterated-v2.Q4_K_M.gguf
+- **Qwen3-VL-8B mmproj:** C:\AI\roamin-ambient-agent-tts\models\Qwen3-VL-8B-Instruct-abliterated-v2.mmproj-Q8_0.gguf
+- Qwen3 8B (legacy): C:\Users\Asherre Roamin\.ollama\models\blobs\sha256-a3de86cd...
 - DeepSeek R1: ..\.lmstudio\models\DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf
 - Ministral 14B: ..\.lmstudio\models\lmstudio-community\Ministral-3-14B-Reasoning-2512-GGUF\Ministral-3-14B-Reasoning-2512-Q4_K_M.gguf
 - Ministral mmproj: ...same dir...\mmproj-Ministral-3-14B-Reasoning-2512-F16.gguf
 - Qwen3 Coder: ..\.lmstudio\models\lmstudio-community\Qwen3-Coder-Next-GGUF\Qwen3-Coder-Next-Q4_K_M.gguf
+
+mmproj auto-resolution: _MMPROJ_MAP dict maps model_path -> mmproj_path (no hardcoded capability checks)
 
 Prompt formats (auto-detected from model path):
 - Qwen3/DeepSeek: ChatML (<|im_start|> tokens), with no_think=True injects <think>\n\n</think>
@@ -262,16 +264,17 @@ Known stored facts:
 | AgentLoop (model hot) | ~3-4s | GPU already loaded |
 | AgentLoop (model cold) | ~12-20s | Reloading after unload |
 | Direct dispatch | ~0.1-1.7s | Web search ~1.5s, memory ~0.1s |
-| Reply generation | ~0.1-1.5s | Qwen3 8B GPU |
+| Reply generation | ~0.1-1.5s | Qwen3-VL-8B GPU |
 | TTS novel reply | ~7-22s | Chatterbox CUDA synthesis |
 | TTS cached phrase | instant | WAV playback |
 | TOTAL (direct dispatch path) | ~13-16s | e.g. weather search |
 | TOTAL (AgentLoop path) | ~20-37s | Complex queries |
 
-VRAM budget (24GB RTX 3090):
-- Qwen3 8B full offload: ~14GB
+VRAM budget (24GB RTX 3090) — UPDATED 2026-04-01:
+- Qwen3-VL-8B abliterated full offload: ~5.4GB (model 4.7GB + mmproj 718MB)
 - Chatterbox TTS (CUDA): ~3GB
-- Remaining when both loaded: ~7GB (was 0 = 500 errors)
+- Remaining when both loaded: ~15.6GB (massive headroom vs old 7GB)
+- Old Qwen3 8B was ~14GB — upgrade freed ~9GB VRAM
 - GPU unload + empty_cache() frees Chatterbox headroom but causes cold reload next wake
 
 ---
