@@ -11,7 +11,24 @@ script = "C:\AI\roamin-ambient-agent-tts\run_wake_listener.py"
 workingDir = "C:\AI\roamin-ambient-agent-tts"
 logFile = "C:\AI\roamin-ambient-agent-tts\logs\startup.log"
 
-' Single-instance guard: check if run_wake_listener is already running
+' Single-instance guard: check lock file first (faster, handles startup race before WMI updates)
+Dim lockPath, lockPid
+lockPath = "C:\AI\roamin-ambient-agent-tts\logs\_wake_listener.lock"
+If fso.FileExists(lockPath) Then
+    On Error Resume Next
+    Dim lf
+    Set lf = fso.OpenTextFile(lockPath, 1)
+    lockPid = Trim(lf.ReadAll())
+    lf.Close
+    On Error GoTo 0
+    If lockPid <> "" And IsNumeric(lockPid) Then
+        If IsPidRunning(CLng(lockPid)) Then
+            WScript.Quit 0
+        End If
+    End If
+End If
+
+' Fallback: WMI process scan (catches processes that haven't written lock file yet)
 If IsProcessRunning("run_wake_listener") Then
     WScript.Quit 0
 End If
@@ -25,6 +42,15 @@ result = shell.Run("""" & pythonw & """ """ & script & """", 0, False)
 
 ' Log startup
 WriteLog "WakeListener started PID: " & result
+
+Function IsPidRunning(pid)
+    Dim wmi, procs
+    On Error Resume Next
+    Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+    Set procs = wmi.ExecQuery("SELECT * FROM Win32_Process WHERE ProcessId=" & pid)
+    IsPidRunning = (procs.Count > 0)
+    On Error GoTo 0
+End Function
 
 Function IsProcessRunning(processName)
     Dim wmi, processes, process, count

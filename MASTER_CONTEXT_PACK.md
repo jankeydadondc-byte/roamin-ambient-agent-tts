@@ -1,9 +1,9 @@
 # Roamin Ambient Agent — Master Context Pack
-# Generated: 2026-03-31 (end of session)
+# Updated: 2026-04-01 (resilience pass — timeouts, retry, fallback, input validation)
 # For: new Claude conversations to pick up where we left off
 # Repo: C:\AI\roamin-ambient-agent-tts
 # GitHub: jankeydadondc-byte/roamin-ambient-agent-tts (private)
-# Latest commit: da78d21
+# Latest commit: a9eee05 (pending: stabilization + resilience pass)
 
 ---
 
@@ -33,8 +33,10 @@ Roamin is an ambient AI assistant that runs silently in the background on Window
 ## REPO STRUCTURE
 
 C:\AI\roamin-ambient-agent-tts\
-├── run_wake_listener.py           # Entry point, RUST_LOG=warn, lock guard, warmup
-├── _start_wake_listener.vbs       # Windows startup launcher (native XMLHTTP, no PS flash)
+├── run_wake_listener.py           # Entry point, RUST_LOG=warn, lock guard, warmup, log pruning
+├── _start_wake_listener.vbs       # Windows startup launcher (lock file + WMI dual guard)
+├── _launch_and_monitor.ps1        # Kill dupes, clear log, launch, tail filtered log
+├── CONSOLIDATED_PRIORITIES.md     # Unified roadmap (merged still-needs-work + improvement batch)
 ├── CLAUDE_CODE_CONTEXT.md         # Previous context pack (superseded by this file)
 ├── agent/
 │   └── core/
@@ -43,10 +45,10 @@ C:\AI\roamin-ambient-agent-tts\
 │       │   ├── tts.py             # Chatterbox + pyttsx3 fallback, phrase cache
 │       │   └── stt.py             # Silero VAD + Whisper CPU
 │       ├── llama_backend.py       # LlamaCppBackend, ModelRegistry singleton, ALL models
-│       ├── model_router.py        # Task→model routing, HTTP fallback
-│       ├── agent_loop.py          # Plan + execute loop (improved prompt)
-│       ├── tools.py               # 28 tool implementations (NEW - Claude Code)
-│       ├── tool_registry.py       # Tool plugin system wired to tools.py (NEW)
+│       ├── model_router.py        # Task→model routing, HTTP fallback w/ retry
+│       ├── agent_loop.py          # Plan + execute loop (cancellation, per-step timeouts)
+│       ├── tools.py               # 28 tool implementations (input validation, structured errors)
+│       ├── tool_registry.py       # Tool plugin system wired to tools.py
 │       ├── memory/
 │       │   ├── memory_store.py    # SQLite CRUD + get_all_named_facts
 │       │   ├── memory_search.py   # ChromaDB semantic search
@@ -54,7 +56,7 @@ C:\AI\roamin-ambient-agent-tts\
 │       ├── screen_observer.py     # PIL screenshot + vision model
 │       └── context_builder.py    # Builds context for AgentLoop
 ├── logs/
-│   ├── wake_listener.log          # All stdout/stderr (pythonw redirects here)
+│   ├── wake_listener.log          # All stdout/stderr (auto-pruned 40KB max / 15KB tail)
 │   └── startup.log                # VBS startup events
 └── .gitignore                     # Includes .claude/, workspace/, phrase_cache/, *.db
 
@@ -123,12 +125,14 @@ Chatterbox TTS:
 5. Memory: _build_memory_context() → only inject facts whose name appears in query
 6. Layer 1 — Direct dispatch: _try_direct_dispatch(transcription, registry)
    - Pattern-matches against known tool intents
-   - If match: execute tool immediately, skip AgentLoop
+   - If match AND success: use tool result as context, skip AgentLoop
+   - If match AND failure: FALL THROUGH to AgentLoop (resilience pass)
    - Returns dict with {success, result} or None
-7. Layer 2 — AgentLoop (if no direct match):
+7. Layer 2 — AgentLoop (if no direct match OR direct dispatch failed):
    - _classify_task() → vision/code/reasoning/default
    - _generate_plan() → LLM returns JSON steps
-   - _execute_step() → registry.execute() per step
+   - _execute_step() → registry.execute() per step (30s timeout per tool)
+   - cancel() method + threading.Event for graceful mid-plan cancellation
 8. tool_context: ASCII-stripped, max 1500 chars
 9. Think tier: _classify_think_level() → (no_think, max_tokens)
 10. Reply: router.respond("default", ..., messages, max_tokens, no_think)
@@ -297,15 +301,70 @@ VRAM budget (24GB RTX 3090):
 21. Web search reply wrong → "couldn't find weather" fixed by ASCII strip
 22. Tool files in wrong git paths → copied from worktree to correct locations
 
+## STABILIZATION PASS (2026-03-31)
+
+23. AgentLoop tool execution stub → wired registry.execute() in _execute_step()
+    - Layer 2 was generating plans but NEVER running tools (comment said "wired in A5+")
+    - Fixed: executes tool, sets status="executed", captures outcome[:1500]
+    - wake_listener.py already filters for status=="executed" — no other changes needed
+24. Thread guard on _on_wake → non-blocking lock in WakeListener
+    - Rapid ctrl+space presses were spawning concurrent threads (VRAM/mic/TTS contention)
+    - Fixed: _wake_lock = threading.Lock(), acquire(blocking=False) drops duplicate presses
+    - Logs "[Roamin] Wake already in progress, ignoring" on dropped presses
+25. Defensive memory context init → facts=[] initialized before try block
+    - _build_memory_context() had fragile NameError risk if MemoryStore() threw
+    - Fixed: facts=[] before try, filtering logic moved outside exception handler
+26. LM Studio VRAM warning at warmup → port 1234 check before GPU load
+    - User had no signal why GPU warmup failed when LM Studio occupied VRAM
+    - Fixed: socket.create_connection("127.0.0.1", 1234, timeout=1) warns if detected
+27. Warmup timeout guard → threaded 120s timeout on GPU model load
+    - Corrupt GGUF or hung CUDA driver could block startup forever
+    - Fixed: daemon thread + wt.join(timeout=120), logs TIMED OUT if hung
+
+## RESILIENCE PASS (2026-04-01)
+
+28. Double-launch race condition fixed in VBS launcher
+    - _start_wake_listener.vbs now checks lock file PID BEFORE WMI scan
+    - IsPidRunning() helper queries Win32_Process by PID directly
+    - Covers the startup race window where WMI hasn't updated yet
+29. AgentLoop graceful cancellation → cancel() method + threading.Event
+    - _cancel_event checked between steps, returns status="cancelled"
+    - wake_listener speaks "Got it, stopping." on cancellation
+30. Per-step tool timeout → 30s via ThreadPoolExecutor in _execute_step()
+    - Prevents a single stuck tool from hanging the entire AgentLoop
+    - Logs warning with tool name on timeout
+31. HTTP retry with exponential backoff in ModelRouter
+    - Timeout/ConnectionError retries 2x (1s, 2s delays)
+    - Logs each retry attempt with reason
+    - KeyError (bad response format) still fails immediately
+32. Direct dispatch fallback → failed tools fall through to AgentLoop
+    - Previously: tool failure result was injected as context (bad reply)
+    - Now: sets direct_result=None, AgentLoop runs as if no pattern matched
+33. Input validation on security-critical tools
+    - open_url, fetch_url: reject non-http(s) schemes
+    - web_search: strip control chars, 500 char limit
+    - clipboard_write: strip null bytes, 10k char limit
+    - run_python, run_powershell, run_cmd: 10k char limit
+34. Structured error categories in _fail()
+    - _fail() accepts optional category: "validation", "timeout", "unavailable", "permission", "error"
+    - Enables downstream consumers to differentiate error types
+35. Log auto-pruning reduced from 500KB to 40KB max (15KB tail)
+    - Keeps log under ~10k tokens for readability
+    - Prunes at startup + every 10 minutes via background thread
+
 ---
 
 ## WHAT STILL NEEDS WORK (next session priorities)
 
+See also: CONSOLIDATED_PRIORITIES.md for the full unified roadmap (Priorities 1-7).
+
 ### Critical / Functional
-1. Screen observation vision routing
-   - take_screenshot() fires but result goes to text model that can't see
-   - FIX: detect screenshot result → route to task='vision' or 'ministral_vision'
-   - Pass image bytes to llama_backend chat() with vision model
+1. Screen observation vision routing (CONSOLIDATED_PRIORITIES.md Priority 2)
+   - take_screenshot() fires, ScreenObserver.observe() sends to vision API internally
+   - BUT: when routed back through wake_listener, result is text passed to default model
+   - FIX: detect screenshot result in direct dispatch → re-route to task='vision' with image bytes
+   - llama_backend.chat() has NO image handling currently — needs extension
+   - Pass actual image bytes to llama_backend chat() with vision model + mmproj loaded
 
 2. Model selection — no voice-controlled way to pick model
    - Current: hardcoded in CAPABILITY_MAP, auto-selected by keyword
@@ -313,34 +372,36 @@ VRAM budget (24GB RTX 3090):
      C) query prefix ("ministral: what's on my screen")
    - Ministral 14B capabilities registered but nothing routes to them yet
 
-3. Double-launch fix
-   - Two pythonw instances still start simultaneously on VBS fire
-   - Lock file guard works for SUBSEQUENT launches, not initial race
-   - Low priority since it only happens during manual testing, not real boot
-
 ### Latency
-4. Streaming TTS
+3. Streaming TTS
    - Biggest remaining latency win (~50% cut to perceived response time)
    - Pipe model output token-by-token to Chatterbox as sentences complete
    - Requires rewriting router.respond() to yield tokens
-   - Chatterbox API supports streaming synthesis
+   - Chatterbox /v1/audio/speech likely does NOT support streaming (OpenAI-compat)
+   - model_router.respond() returns str, both backends set stream: False
 
-5. Whisper CUDA
+4. Whisper CUDA
    - STT takes 5-6s on CPU
    - Options: install CUDA torch (~3GB), or switch to whisper.cpp
    - Would cut STT to ~0.5s
 
 ### Architecture
-6. RoaminCP UI (C:\AI\os_agent\ui\roamin-control)
+5. RoaminCP UI (C:\AI\os_agent\ui\roamin-control)
    - Tauri + React, Monaco editor, xterm terminal, diff viewer
    - Not yet connected to ambient agent
    - Control API still points at os_agent, not new repo
 
-7. TurboQuant KV cache compression
-   - Evaluated this session — deferred until package matures
+6. TurboQuant KV cache compression
+   - Evaluated — deferred until package matures
    - Would free ~1-4GB VRAM during inference
    - Requires migrating from llama-cpp-python to HuggingFace or vLLM
    - Current package version: 0.2.0 alpha (released 2026-03-27)
+
+### Cosmetic
+7. primp TLS debug spam in logs during web_search
+   - RUST_LOG=warn set but primp bypasses it for ddgs HTTP connections
+   - _launch_and_monitor.ps1 filters it out of terminal view
+   - Log auto-prune keeps file small, but spam still fills ~90% of log content
 
 ---
 
@@ -368,6 +429,9 @@ VRAM budget (24GB RTX 3090):
 | fdabf08 | Remove .claude worktrees from git, add to gitignore |
 | 3644857 | ASCII strip on tool_context, RUST_LOG=warn |
 | da78d21 | Wire all models including Ministral 14B, Mistral prompt format |
+| a9eee05 | fix: reduce HTTP fallback timeout 60s→5s — prevents hang when LM Studio closed |
+| (pending) | fix: stabilization pass — AgentLoop execution, thread guard, warmup timeout, LM Studio warning |
+| (pending) | feat: resilience pass — tool timeouts, HTTP retry, dispatch fallback, input validation, log prune 40KB |
 
 ---
 
@@ -433,13 +497,16 @@ $content = $content.Replace('old text', 'new text')
 ## KNOWN GOTCHAS
 
 - Whisper FP16 warning: harmless, runs FP32 on CPU
-- pyttsx3 "run loop already started": two instances running simultaneously
+- pyttsx3 COM thread affinity: skips playback when not on main thread (prints log, continues)
 - Chatterbox 500: VRAM contention — Qwen3 fills GPU, Chatterbox can't allocate
 - LM Studio plugin: permanently installed, auto-loads, no shortcut needed
 - RUST_LOG=warn suppresses primp TLS spam at process level (set before stdout redirect)
-- TLS debug spam still appears if RUST_LOG isn't set early enough (first session)
+- TLS debug spam still leaks through for ddgs web_search connections (~90% of log volume)
 - ddgs (duckduckgo-search renamed package): install both for compatibility
   pip install ddgs duckduckgo-search
 - Claude Code worktrees: always validate with main repo venv, copy files manually after
 - pre-commit black reformats: causes commit to fail, re-add and try again
 - Git commit with spaces in message: use .bat file or single-word message in inline cmd
+- Log file auto-prunes at 40KB max (keeps 15KB tail) — at startup + every 10 min
+- Tool execution timeout: 30s per tool in AgentLoop; subprocess tools have their own 30s timeout
+- HTTP retry: model_router retries Timeout/ConnectionError 2x with exponential backoff (1s, 2s)

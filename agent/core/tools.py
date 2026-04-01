@@ -23,8 +23,12 @@ def _ok(result: str) -> dict:
     return {"success": True, "result": result}
 
 
-def _fail(error: str) -> dict:
-    return {"success": False, "error": error}
+def _fail(error: str, category: str = "error") -> dict:
+    """Return a failure dict with an error category for structured reporting.
+
+    Categories: "validation", "timeout", "unavailable", "permission", "error".
+    """
+    return {"success": False, "error": error, "category": category}
 
 
 # ---------------------------------------------------------------------------
@@ -35,7 +39,9 @@ def _fail(error: str) -> dict:
 def _run_python(params: dict) -> dict:
     code = params.get("code", "")
     if not code:
-        return _fail("No code provided")
+        return _fail("No code provided", "validation")
+    if len(code) > 10_000:
+        return _fail(f"Code too long ({len(code)} chars, max 10000)", "validation")
     try:
         proc = subprocess.run(
             [sys.executable, "-c", code],
@@ -55,7 +61,9 @@ def _run_python(params: dict) -> dict:
 def _run_powershell(params: dict) -> dict:
     command = params.get("command", "")
     if not command:
-        return _fail("No command provided")
+        return _fail("No command provided", "validation")
+    if len(command) > 10_000:
+        return _fail(f"Command too long ({len(command)} chars, max 10000)", "validation")
     try:
         proc = subprocess.run(
             ["powershell", "-Command", command],
@@ -75,7 +83,9 @@ def _run_powershell(params: dict) -> dict:
 def _run_cmd(params: dict) -> dict:
     command = params.get("command", "")
     if not command:
-        return _fail("No command provided")
+        return _fail("No command provided", "validation")
+    if len(command) > 10_000:
+        return _fail(f"Command too long ({len(command)} chars, max 10000)", "validation")
     try:
         proc = subprocess.run(
             command,
@@ -425,7 +435,11 @@ def _check_port(params: dict) -> dict:
 def _web_search(params: dict) -> dict:
     query = params.get("query", "")
     if not query:
-        return _fail("No query provided")
+        return _fail("No query provided", "validation")
+    # Strip control characters and limit length
+    query = re.sub(r"[\x00-\x1f\x7f]", " ", query).strip()
+    if len(query) > 500:
+        query = query[:500]
     try:
         try:
             from ddgs import DDGS
@@ -449,7 +463,9 @@ def _web_search(params: dict) -> dict:
 def _fetch_url(params: dict) -> dict:
     url = params.get("url", "")
     if not url:
-        return _fail("No URL provided")
+        return _fail("No URL provided", "validation")
+    if not re.match(r"^https?://", url, re.IGNORECASE):
+        return _fail(f"URL must start with http:// or https:// — got: {url[:80]}", "validation")
     try:
         import requests
 
@@ -495,7 +511,9 @@ def _notify(params: dict) -> dict:
 def _open_url(params: dict) -> dict:
     url = params.get("url", "")
     if not url:
-        return _fail("No URL provided")
+        return _fail("No URL provided", "validation")
+    if not re.match(r"^https?://", url, re.IGNORECASE):
+        return _fail(f"URL must start with http:// or https:// — got: {url[:80]}", "validation")
     try:
         webbrowser.open(url)
         return _ok(f"Opened {url}")
@@ -524,7 +542,11 @@ def _clipboard_read(params: dict) -> dict:
 def _clipboard_write(params: dict) -> dict:
     text = params.get("text", "")
     if not text:
-        return _fail("No text provided")
+        return _fail("No text provided", "validation")
+    # Strip null bytes and enforce a sane size limit
+    text = text.replace("\x00", "")
+    if len(text) > 10_000:
+        return _fail(f"Text too large for clipboard ({len(text)} chars, max 10000)", "validation")
     try:
         import win32clipboard
 

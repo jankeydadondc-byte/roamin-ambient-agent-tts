@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import tempfile
-import threading
 from pathlib import Path
 
 try:
@@ -206,18 +205,18 @@ class TextToSpeech:
             self._speak_pyttsx3(text)
 
     def _speak_pyttsx3(self, text: str) -> None:
+        import threading
+
         if self._pyttsx3_engine is None:
             print(f"[TTS] (no engine) {text}")
             return
+        if threading.current_thread() is not threading.main_thread():
+            # pyttsx3 COM calls deadlock outside the main thread on Windows
+            print(f"[TTS] (pyttsx3 skipped, not main thread) {text}")
+            return
         try:
-
-            def _run() -> None:
-                self._pyttsx3_engine.say(text)
-                self._pyttsx3_engine.runAndWait()
-
-            t = threading.Thread(target=_run, daemon=True)
-            t.start()
-            t.join()
+            self._pyttsx3_engine.say(text)
+            self._pyttsx3_engine.runAndWait()
         except Exception as e:
             print(f"[TTS] pyttsx3 error: {e}")
 

@@ -4,7 +4,9 @@ import atexit
 import logging
 import os
 import signal
+import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -51,13 +53,50 @@ def handle_signal(signum: int, frame: object | None) -> None:
     raise SystemExit(0)
 
 
+# Log size limit (~40KB ≈ ~10k tokens at ~4 chars/token)
+_LOG_MAX_BYTES = 40_000
+_LOG_KEEP_BYTES = 15_000  # keep tail ~15KB after prune
+
+
+def _prune_log(log_path: Path) -> None:
+    """Trim log file when it exceeds _LOG_MAX_BYTES, keeping the tail."""
+    try:
+        if not log_path.exists():
+            return
+        size = log_path.stat().st_size
+        if size <= _LOG_MAX_BYTES:
+            return
+        data = log_path.read_bytes()
+        # Find a newline near the keep boundary so we don't split a line
+        cut = len(data) - _LOG_KEEP_BYTES
+        nl = data.find(b"\n", cut)
+        if nl == -1:
+            nl = cut
+        log_path.write_bytes(b"[log pruned]\n" + data[nl + 1 :])
+        print(f"[Roamin] Log pruned: {size} -> {log_path.stat().st_size} bytes", flush=True)
+    except Exception:
+        pass  # never crash over log maintenance
+
+
 def _warmup(stt: SpeechToText, tts: TextToSpeech, agent_loop: AgentLoop) -> None:
     """Pre-load all components so first ctrl+space is instant."""
     t0 = time.perf_counter()
     print("[Roamin] Warmup starting...")
 
+    # Check if LM Studio is running (may occupy VRAM)
+    try:
+        with socket.create_connection(("127.0.0.1", 1234), timeout=1):
+            print(
+                "[Roamin] WARNING: LM Studio detected on port 1234 — "
+                "its loaded model may consume VRAM. If GPU warmup fails, "
+                "consider unloading the LM Studio model."
+            )
+    except OSError:
+        pass  # LM Studio not running, good
+
     # Trigger GPU model load with a minimal dummy inference
     # This forces Qwen3 8B into VRAM now instead of on first real call
+    # HTTP fallback has a 5s timeout (from a9eee05) so we won't hang forever
     try:
         router = ModelRouter()
         router.respond(
@@ -90,6 +129,9 @@ def main() -> None:
 
     # Suppress Rust/primp TLS debug output (bypasses Python logging)
     os.environ.setdefault("RUST_LOG", "warn")
+
+    # Prune log before opening if it's too large
+    _prune_log(log_path)
 
     # Redirect stdout/stderr to log file (pythonw has no console)
     log_file = open(log_path, "a", buffering=1, encoding="utf-8")  # noqa: SIM115
@@ -137,6 +179,14 @@ def main() -> None:
     listener = WakeListener(hotkey="ctrl+space", stt=stt, tts=tts, agent_loop=agent_loop)
     listener.start()
     print("[Roamin] Ready. Press ctrl+space to activate.")
+
+    # Periodic log pruning (every 10 minutes)
+    def _log_prune_loop():
+        while True:
+            time.sleep(600)
+            _prune_log(log_path)
+
+    threading.Thread(target=_log_prune_loop, daemon=True).start()
 
     try:
         keyboard.wait()

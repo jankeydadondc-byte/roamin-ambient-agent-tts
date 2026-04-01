@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+import sys
 import threading
 import time
+import traceback
 
 try:
     import keyboard
@@ -198,6 +200,7 @@ class WakeListener:
         self._stt = stt
         self._tts = tts
         self._agent_loop = agent_loop
+        self._wake_lock = threading.Lock()
 
         if keyboard is None:
             print("[Warning] WakeListener not available (keyboard import failed)")
@@ -233,8 +236,23 @@ class WakeListener:
             print(f"[Warning] Failed to unregister hotkey: {e}")
 
     def _on_wake_thread(self) -> None:
-        """Call _on_wake in a new thread (non-blocking)."""
-        thread = threading.Thread(target=self._on_wake, daemon=True)
+        """Call _on_wake in a new thread (non-blocking). Drops if already running."""
+        if not self._wake_lock.acquire(blocking=False):
+            print("[Roamin] Wake already in progress, ignoring")
+            return
+
+        def _guarded_wake():
+            try:
+                self._on_wake()
+            except Exception as e:
+                print(f"[Roamin] FATAL in _on_wake: {e}", flush=True)
+                traceback.print_exc()
+                sys.stdout.flush()
+                sys.stderr.flush()
+            finally:
+                self._wake_lock.release()
+
+        thread = threading.Thread(target=_guarded_wake, daemon=False)
         thread.start()
 
     def _extract_and_store_fact(self, transcription: str, memory: MemoryManager) -> bool:
@@ -273,26 +291,27 @@ class WakeListener:
             pass
 
         # Pull all named facts — only inject ones relevant to this query
+        facts = []
         try:
             from agent.core.memory.memory_store import MemoryStore
 
             store = MemoryStore()
             facts = store.get_all_named_facts() if hasattr(store, "get_all_named_facts") else []
-            if facts:
-                lower_query = transcription.lower()
-                relevant = [f for f in facts if f["fact_name"].lower() in lower_query]
-                if relevant:
-                    fact_strs = [f"{f['fact_name']}: {f['value']}" for f in relevant]
-                    context_parts.append("Known facts about the user: " + ", ".join(fact_strs))
         except Exception:
             pass
+        if facts:
+            lower_query = transcription.lower()
+            relevant = [f for f in facts if f["fact_name"].lower() in lower_query]
+            if relevant:
+                fact_strs = [f"{f['fact_name']}: {f['value']}" for f in relevant]
+                context_parts.append("Known facts about the user: " + ", ".join(fact_strs))
 
         return "\n".join(context_parts)
 
     def _on_wake(self) -> None:
         """Handle wake word trigger: listen for command and execute."""
         t0 = time.perf_counter()
-        print("[Roamin] Wake triggered at t=0.000")
+        print("[Roamin] Wake triggered at t=0.000", flush=True)
 
         # Use pre-loaded instances or lazy-load if not provided
         tts = self._tts or TextToSpeech()
@@ -303,16 +322,16 @@ class WakeListener:
         if tts.is_available():
             tts.speak("yes? how can i help you")
         t_greeted = time.perf_counter()
-        print(f"[Roamin] t={t_greeted - t0:.3f}s  'Yes?' spoken")
+        print(f"[Roamin] t={t_greeted - t0:.3f}s  'Yes?' spoken", flush=True)
 
         # STT — record and transcribe
         transcription = None
         try:
             transcription = stt.record_and_transcribe(duration_seconds=5)
         except Exception as e:
-            print(f"[Warning] STT error: {e}")
+            print(f"[Warning] STT error: {e}", flush=True)
         t_stt = time.perf_counter()
-        print(f"[Roamin] t={t_stt - t0:.3f}s  STT done (+{t_stt - t_greeted:.3f}s) → '{transcription}'")
+        print(f"[Roamin] t={t_stt - t0:.3f}s  STT done (+{t_stt - t_greeted:.3f}s) → '{transcription}'", flush=True)
 
         if transcription is None or transcription.strip() == "":
             if tts.is_available():
@@ -330,14 +349,20 @@ class WakeListener:
         t_dispatch = time.perf_counter()
 
         tool_context = ""
-        if direct_result is not None:
+        if direct_result is not None and direct_result.get("success"):
             print(f"[Roamin] t={t_dispatch - t0:.3f}s  Direct dispatch (+{t_dispatch - t_stt:.3f}s)")
-            if direct_result.get("success"):
-                tool_context = direct_result["result"][:1500]
-                tool_context = tool_context.encode("ascii", errors="ignore").decode("ascii")
-            else:
-                tool_context = direct_result.get("error", "tool failed")
-        else:
+            tool_context = direct_result["result"][:1500]
+            tool_context = tool_context.encode("ascii", errors="ignore").decode("ascii")
+        elif direct_result is not None:
+            # Tool matched but execution failed — fall through to AgentLoop as fallback
+            print(
+                f"[Roamin] t={t_dispatch - t0:.3f}s  Direct dispatch FAILED "
+                f"({direct_result.get('error', 'unknown')}) — falling to AgentLoop",
+                flush=True,
+            )
+            direct_result = None  # treat as no match so AgentLoop branch runs
+
+        if direct_result is None:
             # Layer 2: AgentLoop — full planner for complex queries
             result = {}
             goal_lower = transcription.lower()
@@ -359,6 +384,10 @@ class WakeListener:
             if status == "failed":
                 if tts.is_available():
                     tts.speak("I couldn't complete that task.")
+                return
+            if status == "cancelled":
+                if tts.is_available():
+                    tts.speak("Got it, stopping.")
                 return
             if status == "blocked":
                 if tts.is_available():

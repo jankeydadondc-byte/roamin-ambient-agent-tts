@@ -4,6 +4,7 @@ model_router.py — Routes tasks to the appropriate local model.
 
 import json
 import logging
+import time
 from pathlib import Path
 
 _CONFIG_PATH = Path(__file__).parent / "model_config.json"
@@ -95,7 +96,7 @@ class ModelRouter:
         except ImportError as e:
             logger.debug("llama-cpp-python import failed: %s. Falling back to HTTP", e)
 
-        # Fallback to HTTP (Ollama/LM Studio)
+        # Fallback to HTTP (Ollama/LM Studio) with exponential backoff retry
         try:
             import requests
 
@@ -122,18 +123,33 @@ class ModelRouter:
                     "stream": False,
                 }
 
-            response = requests.post(url, json=payload, timeout=5)
-            response.raise_for_status()
+            max_retries = 2
+            last_error: Exception | None = None
+            for attempt in range(max_retries + 1):
+                try:
+                    response = requests.post(url, json=payload, timeout=5)
+                    response.raise_for_status()
+                    data = response.json()
+                    if messages is not None:
+                        return data["choices"][0]["message"]["content"].strip()
+                    else:
+                        return data.get("response", "").strip()
+                except (requests.Timeout, requests.ConnectionError) as e:
+                    last_error = e
+                    if attempt < max_retries:
+                        wait = 2**attempt  # 1s, 2s
+                        logger.warning(
+                            "HTTP fallback attempt %d/%d failed (%s) — retrying in %ds",
+                            attempt + 1,
+                            max_retries + 1,
+                            e,
+                            wait,
+                        )
+                        time.sleep(wait)
+                except KeyError as e:
+                    raise RuntimeError(f"Unexpected response format from HTTP endpoint: {e}")
 
-            data = response.json()
-            if messages is not None:
-                # LM Studio chat completions
-                return data["choices"][0]["message"]["content"].strip()
-            else:
-                # Ollama generate API
-                return data.get("response", "").strip()
+            raise RuntimeError(f"HTTP fallback failed for task '{task}' after {max_retries + 1} attempts: {last_error}")
 
         except requests.RequestException as e:
             raise RuntimeError(f"HTTP fallback failed for task '{task}' at {self.endpoint(task)}: {e}")
-        except KeyError as e:
-            raise RuntimeError(f"Unexpected response format from HTTP endpoint: {e}")

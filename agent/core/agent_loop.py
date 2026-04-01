@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
+import logging
+import threading
 
 from agent.core.context_builder import ContextBuilder
 from agent.core.memory import MemoryManager
 from agent.core.model_router import ModelRouter
 from agent.core.screen_observer import ScreenObserver
 from agent.core.tool_registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
+
+# Per-step tool execution timeout (seconds). Prevents a single stuck tool from hanging forever.
+_TOOL_TIMEOUT_SECONDS = 30
 
 
 class AgentLoop:
@@ -24,6 +32,12 @@ class AgentLoop:
         self._router = ModelRouter()
         self._context_builder = ContextBuilder()
         self._registry = ToolRegistry()
+        self._cancel_event = threading.Event()
+
+    def cancel(self) -> None:
+        """Signal the running run() to stop after the current step completes."""
+        self._cancel_event.set()
+        logger.info("AgentLoop cancel requested")
 
     def run(self, goal: str, include_screen: bool = False) -> dict:
         """
@@ -43,6 +57,8 @@ class AgentLoop:
             "blocked_steps": [],
             "stored": False,
         }
+
+        self._cancel_event.clear()
 
         # Determine task type and select model
         task_type = self._classify_task(goal)
@@ -65,8 +81,13 @@ class AgentLoop:
             result["error"] = "Could not generate plan (model unreachable or returned invalid response)"
             return result
 
-        # Execute each step
+        # Execute each step — check for cancellation between steps
         for step in plan:
+            if self._cancel_event.is_set():
+                result["status"] = "cancelled"
+                result["cancelled_at_step"] = step.get("step")
+                logger.info("AgentLoop cancelled at step %s", step.get("step"))
+                return result
             step_result = self._execute_step(step)
             if step_result.get("blocked"):
                 result["blocked_steps"].append(step_result)
@@ -161,7 +182,20 @@ class AgentLoop:
             step_result["reason"] = f"Tool '{tool_name}' not in registry"
             return step_result
 
-        # Mark as approved (actual execution wired in A5+)
-        step_result["status"] = "approved"
-        step_result["outcome"] = f"Step approved for execution: {step.get('action')}"
+        # Execute low/medium risk tools with a timeout guard
+        params = step.get("params") or step.get("parameters") or {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self._registry.execute, str(tool_name), params)
+            try:
+                outcome = future.result(timeout=_TOOL_TIMEOUT_SECONDS)
+                step_result["status"] = "executed"
+                step_result["outcome"] = str(outcome.get("result") or outcome.get("error", ""))[:1500]
+            except concurrent.futures.TimeoutError:
+                step_result["status"] = "failed"
+                step_result["outcome"] = f"Tool '{tool_name}' timed out after {_TOOL_TIMEOUT_SECONDS}s"
+                logger.warning("Tool '%s' timed out after %ds", tool_name, _TOOL_TIMEOUT_SECONDS)
+            except Exception as e:
+                step_result["status"] = "failed"
+                step_result["outcome"] = str(e)[:500]
+                logger.warning("Tool '%s' raised exception: %s", tool_name, e)
         return step_result
