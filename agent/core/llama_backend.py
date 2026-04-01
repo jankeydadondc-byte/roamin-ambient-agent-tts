@@ -12,8 +12,16 @@ from pathlib import Path
 # Import guard: deferred error if llama-cpp-python is missing
 try:
     from llama_cpp import Llama
+    from llama_cpp.llama_chat_format import Llava15ChatHandler
+
+    try:
+        from llama_cpp.llama_chat_format import Qwen25VLChatHandler
+    except ImportError:
+        Qwen25VLChatHandler = None  # type: ignore
 except ImportError:
     Llama = None  # type: ignore
+    Llava15ChatHandler = None  # type: ignore
+    Qwen25VLChatHandler = None  # type: ignore
 
 # Model paths validated at runtime (not import time)
 # --- Primary: Qwen3-VL-8B abliterated (unified default + vision) ---
@@ -148,7 +156,14 @@ class LlamaCppBackend:
         if self.mmproj_path is not None:
             if not self.mmproj_path.exists():
                 raise RuntimeError(f"Multimodal projection file not found: {self.mmproj_path}")
-            kwargs["mmproj"] = str(self.mmproj_path)
+            model_lower = str(self.model_path).lower()
+            is_qwen_vl = any(x in model_lower for x in ("qwen2-vl", "qwen2_vl", "qwen25vl", "qwen3-vl", "qwen3_vl"))
+            if is_qwen_vl and Qwen25VLChatHandler is not None:
+                kwargs["chat_handler"] = Qwen25VLChatHandler(
+                    clip_model_path=str(self.mmproj_path), verbose=self.verbose
+                )
+            elif Llava15ChatHandler is not None:
+                kwargs["chat_handler"] = Llava15ChatHandler(clip_model_path=str(self.mmproj_path), verbose=self.verbose)
 
         try:
             self._llm = Llama(**kwargs)
@@ -202,7 +217,21 @@ class LlamaCppBackend:
         if not self.is_loaded():
             raise RuntimeError("Model must be loaded before calling chat().")
 
-        # Convert message dicts to llama-cpp format
+        # Vision path: detect multimodal messages (content is a list with image_url blocks)
+        if any(isinstance(msg.get("content"), list) for msg in messages):
+            assert self._llm is not None  # guaranteed by is_loaded() check above
+            response = self._llm.create_chat_completion(
+                messages=messages,  # type: ignore[arg-type]
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stop=stop or [],
+            )
+            if not response or not response["choices"]:
+                raise RuntimeError("No response from model.")
+            reply = response["choices"][0]["message"]["content"] or ""
+            return reply.strip()
+
+        # Text-only path: convert message dicts to llama-cpp format
         prompt = self._format_messages_as_prompt(messages, no_think=no_think)
 
         response = self._llm(

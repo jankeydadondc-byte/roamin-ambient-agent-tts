@@ -488,7 +488,11 @@ def _take_screenshot(params: dict) -> dict:
         obs = ScreenObserver()
         result = obs.observe()
         if "description" in result:
-            return _ok(result["description"])
+            return {
+                "success": True,
+                "result": result["description"],
+                "screenshot_path": result.get("screenshot_path"),
+            }
         return _fail(result.get("error", "Screenshot failed"))
     except Exception as e:
         return _fail(str(e))

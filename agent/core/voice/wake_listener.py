@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import re
 import sys
 import threading
@@ -351,6 +353,69 @@ class WakeListener:
         tool_context = ""
         if direct_result is not None and direct_result.get("success"):
             print(f"[Roamin] t={t_dispatch - t0:.3f}s  Direct dispatch (+{t_dispatch - t_stt:.3f}s)")
+
+            # Vision fast-path — screenshot_path present means image bytes must reach the LLM
+            screenshot_path = direct_result.get("screenshot_path")
+            if screenshot_path:
+                try:
+                    from PIL import Image
+
+                    # Load and resize to max 1024x1024 (mmproj re-encodes anyway; keeps base64 small)
+                    img = Image.open(screenshot_path)
+                    img.thumbnail((1024, 1024), Image.LANCZOS)
+                    buf = io.BytesIO()
+                    img.save(buf, format="PNG")
+                    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+                    vision_messages = [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are Roamin, a voice assistant. "
+                                "The user has shared their screen. "
+                                "Describe what you see in ONE short spoken sentence. "
+                                "No lists, no markdown."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": transcription},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:image/png;base64,{b64}"},
+                                },
+                            ],
+                        },
+                    ]
+                    vision_router = ModelRouter()
+                    vision_reply = vision_router.respond(
+                        "vision",
+                        transcription,
+                        messages=vision_messages,  # type: ignore[arg-type]
+                        max_tokens=150,
+                        temperature=0.7,
+                        no_think=True,
+                    )
+                    vision_reply = re.sub(r"<think>.*?</think>", "", vision_reply, flags=re.DOTALL).strip()
+                    vision_reply = re.sub(r"[^\x00-\x7F]+", "", vision_reply).strip()
+                    vision_reply = vision_reply[:200] if vision_reply else "I can see your screen."
+                    t_reply = time.perf_counter()
+                    print(
+                        f"[Roamin] t={t_reply - t0:.3f}s  Reply generated "
+                        f"(+{t_reply - t_dispatch:.3f}s) \u2192 '{vision_reply}'"
+                    )
+                    if tts.is_available():
+                        tts.speak(vision_reply)
+                    t_spoken = time.perf_counter()
+                    print(f"[Roamin] t={t_spoken - t0:.3f}s  Reply spoken (+{t_spoken - t_reply:.3f}s)")
+                    print(f"[Roamin] TOTAL: {t_spoken - t0:.3f}s")
+                    return  # vision fully handled — skip text-model path
+                except Exception as e:
+                    print(f"[Warning] Vision fast-path failed ({e}) — falling back to text description")
+                    # Fall through: use text description from direct_result["result"] as tool_context
+
+            # Non-vision direct dispatch (or vision fallback after failure)
             tool_context = direct_result["result"][:1500]
             tool_context = tool_context.encode("ascii", errors="ignore").decode("ascii")
         elif direct_result is not None:
