@@ -125,9 +125,10 @@ class AgentLoop:
     def _generate_plan(self, goal: str, context: str, task_type: str) -> list[dict] | None:
         """Call the model and parse a list of steps from its response."""
         system_prompt = (
-            "You are a task planning assistant. Given a goal and context, "
-            "respond with a JSON array of steps. Each step: "
-            '{"step": int, "action": str, "tool": str|null, "params": dict, "risk": "low"|"medium"|"high"}. '
+            "You are a task planning assistant. Output ONLY a JSON array of steps. "
+            'Each step: {"step": int, "action": str, "tool": str|null, "params": dict, "risk": "low"|"medium"|"high"}. '
+            "RULE: If a suitable tool exists in Available Tools, you MUST use it (set tool=<name>). "
+            "Only use tool=null for pure reasoning steps where no tool applies. "
             "Use only tools listed in Available Tools. Keep steps minimal and concrete."
         )
         user_prompt = f"{context}\n\nRespond with ONLY a JSON array of steps for this goal."

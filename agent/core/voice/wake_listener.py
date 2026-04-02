@@ -97,13 +97,35 @@ def _try_direct_dispatch(transcription: str, registry: ToolRegistry) -> dict | N
     lower = transcription.lower()
 
     # --- Web search ---
-    for trigger in ["search for ", "look up ", "google ", "find out about ", "find out "]:
+    for trigger in [
+        "web search for ",
+        "web search ",
+        "do a web search for ",
+        "do a web search ",
+        "do a search for ",
+        "do a search on ",
+        "search the web for ",
+        "search the web ",
+        "search for ",
+        "look up ",
+        "google ",
+        "find out about ",
+        "find out ",
+    ]:
         if trigger in lower:
             idx = lower.index(trigger) + len(trigger)
             query = transcription[idx:].strip().rstrip(".?!")
             if query:
                 print(f"[Roamin] Direct dispatch: web_search('{query}')")
                 return registry.execute("web_search", {"query": query})
+
+    # Broader regex: catches "search drone", "search the word drone", etc.
+    m = re.search(r"\bsearch\b\s+(?:for\s+|the\s+web\s+(?:for\s+)?|on\s+|the\s+word\s+)?(.+)", lower)
+    if m:
+        query = transcription[m.start(1) :].strip().rstrip(".?!")
+        if query and len(query) > 2:
+            print(f"[Roamin] Direct dispatch: web_search('{query}')")
+            return registry.execute("web_search", {"query": query})
 
     # Queries that imply web search (current events, news, weather)
     news_patterns = [
@@ -480,6 +502,16 @@ class WakeListener:
             for s in result.get("steps", []):
                 if s.get("status") == "executed" and s.get("tool") and s.get("outcome"):
                     tool_outputs.append(f"[{s['tool']}]: {s['outcome']}")
+
+            # Safety net: AgentLoop ran but skipped tools — force web_search if user clearly wanted one
+            if not tool_outputs and any(
+                w in transcription.lower() for w in ["search", "look up", "find out", "google"]
+            ):
+                sr = registry.execute("web_search", {"query": transcription})
+                if sr.get("ok"):
+                    tool_outputs.append(f"[web_search]: {sr['result'][:1500]}")
+                    print(f"[Roamin] AgentLoop safety net: forced web_search for '{transcription[:60]}'")
+
             tool_context = "\n".join(tool_outputs)[:1500]
 
         # Generate reply with tool results and memory context injected

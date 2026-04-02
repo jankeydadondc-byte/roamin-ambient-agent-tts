@@ -133,10 +133,31 @@ def main() -> None:
     # Prune log before opening if it's too large
     _prune_log(log_path)
 
-    # Redirect stdout/stderr to log file (pythonw has no console)
+    # Tee stdout/stderr to both the visible console (if any) AND the log file.
+    # This means the terminal window launched by _start_wake_listener.vbs shows live output
+    # while wake_listener.log still captures everything for persistence.
+    class _TeeStream:
+        def __init__(self, *streams: object) -> None:
+            self._streams = streams
+
+        def write(self, data: str) -> int:
+            for s in self._streams:
+                try:
+                    s.write(data)  # type: ignore[union-attr]
+                except Exception:
+                    pass
+            return len(data)
+
+        def flush(self) -> None:
+            for s in self._streams:
+                try:
+                    s.flush()  # type: ignore[union-attr]
+                except Exception:
+                    pass
+
     log_file = open(log_path, "a", buffering=1, encoding="utf-8")  # noqa: SIM115
-    sys.stdout = log_file
-    sys.stderr = log_file
+    sys.stdout = _TeeStream(sys.stdout, log_file)  # type: ignore[assignment]
+    sys.stderr = _TeeStream(sys.stderr, log_file)  # type: ignore[assignment]
 
     # Configure logging — suppress noisy third-party loggers
     logging.basicConfig(
