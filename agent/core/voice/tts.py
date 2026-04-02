@@ -92,7 +92,7 @@ def _synthesize_to_file(text: str, url: str, dest: Path, exaggeration: float = 0
             payload: dict = {"input": text, "exaggeration": exaggeration, "cfg_weight": cfg_weight}
             if _VOICE_SAMPLE.exists():
                 payload["voice"] = "voice-sample"
-            timeout = min(15 + len(text) // 10, 25)
+            timeout = min(15 + len(text) // 10, 33)
             r = _requests.post(f"{url}/v1/audio/speech", json=payload, timeout=timeout)
             r.raise_for_status()
             dest.write_bytes(r.content)
