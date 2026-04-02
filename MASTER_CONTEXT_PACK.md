@@ -1,9 +1,9 @@
 # Roamin Ambient Agent — Master Context Pack
-# Updated: 2026-04-01 (vision pass complete — image bytes pipeline working)
+# Updated: 2026-04-02 (latency pass + bug fixes complete)
 # For: new Claude conversations to pick up where we left off
 # Repo: C:\AI\roamin-ambient-agent-tts
 # GitHub: jankeydadondc-byte/roamin-ambient-agent-tts (private)
-# Latest commit: e63dcef
+# Latest commit: e07adf0
 
 ---
 
@@ -33,7 +33,7 @@ Roamin is an ambient AI assistant that runs silently in the background on Window
 ## REPO STRUCTURE
 
 C:\AI\roamin-ambient-agent-tts\
-├── run_wake_listener.py           # Entry point, RUST_LOG=warn, lock guard, warmup, log pruning
+├── run_wake_listener.py           # Entry point, RUST_LOG=warn, lock guard, warmup, log pruning, TeeStream stdout/stderr tee to console+log
 ├── _start_wake_listener.vbs       # Windows startup launcher (lock file + WMI dual guard)
 ├── _launch_and_monitor.ps1        # Kill dupes, clear log, launch, tail filtered log
 ├── CONSOLIDATED_PRIORITIES.md     # Unified roadmap (Priorities 1-7, phase-based)
@@ -46,7 +46,7 @@ C:\AI\roamin-ambient-agent-tts\
 │       ├── voice/
 │       │   ├── wake_listener.py   # Main orchestration: hotkey→STT→dispatch→LLM→TTS
 │       │   ├── tts.py             # Chatterbox + pyttsx3 fallback, phrase cache
-│       │   └── stt.py             # Silero VAD + Whisper CPU (FP32 — CUDA not yet enabled)
+│       │   └── stt.py             # Silero VAD + Whisper CUDA (enabled commit a47b2f2, ~0.5s)
 │       ├── llama_backend.py       # LlamaCppBackend, ModelRegistry singleton, ALL models
 │       ├── model_router.py        # Task→model routing, HTTP fallback w/ retry
 │       ├── model_config.json      # Routing rules, fallback chain, model endpoints
@@ -119,6 +119,7 @@ Chatterbox TTS:
 - Port: 4123, DEVICE=cuda (in .env)
 - Voice sample: C:\AI\chatterbox-api\voice-sample.mp3 (Shawn James clone)
 - venv: Python 3.12, torch 2.6.0+cu124
+- VBScript auto-launches Chatterbox if not running (checks ports 4123-4129 via MSXML2.XMLHTTP before launching Roamin)
 
 ---
 
@@ -126,7 +127,7 @@ Chatterbox TTS:
 
 1. ctrl+space fires → _on_wake_thread → _on_wake
 2. Speak cached wake phrase: "yes? how can i help you" (~2.7s from cache)
-3. STT: Silero VAD listens → stops on silence → Whisper transcribes (~9-12s CPU FP32)
+3. STT: Silero VAD listens → stops on silence → Whisper transcribes (~0.5-1s CUDA)
 4. Memory: _extract_and_store_fact() → regex-extract facts → write to named_facts
 5. Memory: _build_memory_context() → only inject facts whose name appears in query
 6. Layer 1 — Direct dispatch: _try_direct_dispatch(transcription, registry)
@@ -205,7 +206,7 @@ Layer 1 — bypasses AgentLoop entirely for common voice patterns:
 
 | Pattern | Tool called |
 |---|---|
-| "search for X", "look up X", "google X", "find out X" | web_search(query) |
+| "web search for X", "web search X", "do a search for X", "search the word X", regex `\bsearch\b` catch-all, "search for X", "look up X", "google X", "find out X" | web_search(query) — AgentLoop safety net also forces web_search if tool_outputs empty + "search" in query |
 | Weather/news regex patterns | web_search(transcription) |
 | 10 screen regex patterns (see below) | take_screenshot() → **vision fast-path** |
 | "clipboard" + read keywords | clipboard_read() |
@@ -273,20 +274,20 @@ Memory injection: ONLY inject facts whose fact_name appears in the query text
 
 ---
 
-## TIMING PROFILE (measured 2026-04-01 — post-vision-pass)
+## TIMING PROFILE (measured 2026-04-02 — post-latency-pass)
 
 | Phase | Observed | Notes |
 |---|---|---|
 | Warmup (subsequent boots) | ~10s | 13 phrases loaded from disk |
 | Wake phrase (cached) | ~2.7s | From WAV file |
-| STT (VAD + Whisper CPU FP32) | ~9-12s | **BOTTLENECK — no CUDA yet** |
+| STT (VAD + Whisper CUDA) | ~0.5-1s | Whisper CUDA (commit a47b2f2) |
 | Vision fast-path dispatch | ~0.5s | screenshot + PIL + base64 encode |
 | Vision reply generation | ~7s | Qwen3-VL-8B with mmproj |
 | Text reply generation | ~0.5-2s | Qwen3-VL-8B text-only |
-| TTS — novel reply (Chatterbox) | ~8-26s | **BOTTLENECK — no streaming yet** |
+| TTS — novel reply (Chatterbox) | ~8-26s | **BOTTLENECK — no streaming yet** (timeout cap 33s) |
 | TTS — cached phrase | instant | WAV playback |
-| **TOTAL (vision path)** | **~20-45s** | Mostly STT + TTS wait |
-| **TOTAL (text direct dispatch)** | **~13-16s** | e.g. weather search |
+| **TOTAL (vision path)** | **~15-25s** | STT fixed; TTS remaining bottleneck |
+| **TOTAL (text direct dispatch)** | **~5-8s** | e.g. weather/web search |
 
 VRAM budget (24GB RTX 3090):
 - Qwen3-VL-8B abliterated full offload: ~5.4GB (model 4.7GB + mmproj 718MB)
@@ -303,7 +304,7 @@ VRAM budget (24GB RTX 3090):
 | 1 — Stabilization | ✅ COMPLETE | AgentLoop execution, thread guard, warmup timeout |
 | 1.5 — Resilience | ✅ COMPLETE | Tool timeouts, HTTP retry, dispatch fallback, input validation |
 | 2 — Vision | ✅ COMPLETE | Image bytes pipeline, Qwen3-VL-8B, mmproj, vision fast-path |
-| 3 — Latency | **NEXT** | Whisper CUDA (~0.5s STT), streaming TTS, model selection voice |
+| 3 — Latency | **IN PROGRESS** | 3A (Whisper CUDA) ✅ COMPLETE; 3B (streaming TTS) + 3C (model voice select) remaining |
 | 4 — Task Robustness | Planned | Deduplication, prioritization |
 | 5 — UX & Plugins | Planned | Plugin system, notifications, RoaminCP |
 | 6 — Security | Planned | API keys, LLM proxy, browser automation |
@@ -337,24 +338,27 @@ VRAM budget (24GB RTX 3090):
 | 88a0905 | Upgrade to Qwen3-VL-8B abliterated + CAPABILITY_MAP + model_config |
 | 2d571b5 | Wire vision image bytes: chat_handler, multimodal branch, wake_listener fast-path |
 | e63dcef | Expand screen triggers (regex) + fix screenshot_path on HTTP failure |
+| a47b2f2 | Enable Whisper CUDA — STT 9-12s → ~0.5s |
+| 4cf8449 | Fix torch CUDA availability check in stt.py |
+| a488a30 | Fix TTS fallback: SAPI subprocess for non-main-thread calls |
+| 90ceb59 | Add terminal monitoring window (python.exe + style=1 VBScript) |
+| dbf4f2f | Auto-launch Chatterbox in VBScript, add IsChatterboxRunning() |
+| 98b39bb | Fix web search hallucination + TeeStream terminal output |
+| e07adf0 | Extend Chatterbox TTS synthesis timeout from 25s to 33s |
 
 ---
 
 ## WHAT STILL NEEDS WORK (Phase 3 priorities)
 
 ### Latency (PRIMARY — blocks daily usability)
-1. **Whisper CUDA** — STT is 9-12s on CPU
-   - `UserWarning: FP16 is not supported on CPU; using FP32 instead` in every log
-   - Fix: `pip install torch --index-url https://download.pytorch.org/whl/cu124`
-   - Target: ~0.5s STT (20x improvement)
-   - Files: `agent/core/voice/stt.py` — may need `device="cuda"` kwarg to whisper.load_model()
+1. ✅ **Whisper CUDA** — COMPLETE (commit a47b2f2) — STT now ~0.5-1s on CUDA
 
-2. **Streaming TTS** — biggest perceived latency win
+2. **Streaming TTS** — biggest remaining perceived latency win
    - Novel replies take 8-26s of silence before first word
    - Approach: sentence-split reply → synthesize + play sentence 1 while generating rest
    - Files: `model_router.py`, `tts.py`, `wake_listener.py`
 
-3. **Model selection voice control** — unlock Ministral 14B
+3. **Model selection voice control** (3C) — unlock Ministral 14B
    - "think hard about X" → route to ministral_reasoning capability
    - Files: `wake_listener.py` (add pre-classify or direct dispatch trigger)
 
@@ -427,4 +431,9 @@ $content = $content.Replace('old text', 'new text')
 - vision endpoint in model_config.json is "local://llama_cpp" — NOT an HTTP URL
   ScreenObserver._send_to_vision_api() will always fail (ConnectionError) — this is expected
   Vision works via wake_listener fast-path (image bytes), NOT ScreenObserver HTTP path
-- Vision TTS is slow (8-26s) because novel descriptions aren't cached — Phase 3 will fix this
+- Vision TTS is slow (8-26s) because novel descriptions aren't cached — Phase 3B (streaming TTS) will fix this
+- Keyboard 500ms debounce: prevents OS keyboard bounce from firing 3+ parallel wakes (suppress=True + interval=0.5s)
+- TeeStream: stdout/stderr tee to both console (visible terminal) and log file — do NOT replace _TeeStream with a plain redirect or terminal goes blank
+- Chatterbox timeout cap: 33s max — formula is min(15 + len(text)//10, 33); increase if very long replies still truncate
+- VBScript auto-launch: IsChatterboxRunning() checks ports 4123-4129 via MSXML2.XMLHTTP; WaitForChatterbox loops 12×5s (60s max) after launching _start.bat
+- MCP server stability: NEVER use Windows-MCP PowerShell tool to kill Python processes — it crashes the MCP server. Use Bash tool with: taskkill //F //IM python.exe

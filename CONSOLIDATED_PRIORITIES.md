@@ -1,6 +1,6 @@
 # Roamin Consolidated Priorities — Unified Roadmap
 
-**Date:** 2026-04-01 (updated after vision completion)
+**Date:** 2026-04-02 (updated after latency pass + bug-fix session)
 **Scope:** Merge "still needs work" items with Prioritized Improvement Batch into single coherent roadmap
 **Focus:** Most important to stability and solid build first
 
@@ -26,6 +26,14 @@
 - ✅ Structured error categories → `_fail()` accepts `category` param: validation/timeout/unavailable/permission/error (`tools.py`)
 - ✅ Input validation on security-critical tools → URL scheme check, control char strip, size limits (`tools.py`)
 - ✅ Log auto-prune reduced → 40KB max / 15KB tail (~10k tokens) (`run_wake_listener.py`)
+
+### Also Fixed (Bug-Fix Pass — 2026-04-02)
+- ✅ Web search hallucination — expanded direct dispatch triggers (13 phrasings), regex catch-all, AgentLoop safety net (`wake_listener.py`)
+- ✅ Empty terminal window — `_TeeStream` tees stdout/stderr to both console and log file (`run_wake_listener.py`)
+- ✅ Chatterbox not auto-launching — VBScript now checks ports + launches `_start.bat` (`_start_wake_listener.vbs`)
+- ✅ TTS truncation on long replies — timeout cap extended 25s → 33s (`tts.py`)
+- ✅ AgentLoop hallucination fallback — safety net forces `web_search` if plan executed no tools + "search" in query (`wake_listener.py`)
+- ✅ AgentLoop system prompt strengthened — explicit MUST-use-tool mandate (`agent_loop.py`)
 
 ### Remaining Gaps
 
@@ -72,27 +80,22 @@
 **Why now:** Vision works but end-to-end time is 20-45s. This degrades daily usability significantly.
 The base is functionally solid. Latency is the biggest remaining quality-of-life gap before adding features.
 
-### Observed Timings (Post-Vision, 2026-04-01)
+### Observed Timings (Post-Phase-3A, 2026-04-02)
 | Phase | Observed | Target |
 |---|---|---|
 | Wake phrase (cached) | ~2.7s | ~2.7s ✅ |
-| STT (VAD + Whisper CPU) | ~9-12s | ~1s |
+| STT (VAD + Whisper CUDA) | ~0.5-1s | ~0.5s ✅ (Phase 3A complete) |
 | Direct dispatch | ~0.5s | ~0.5s ✅ |
 | Vision reply generation | ~7s | ~5s |
 | Text reply generation | ~0.5-2s | ~0.5s ✅ |
 | TTS (novel reply, Chatterbox) | ~8-26s | ~3-5s |
-| **TOTAL (vision path)** | **~45s** | **~15s** |
-| **TOTAL (text direct dispatch)** | **~13-16s** | **~8-10s** |
+| **TOTAL (vision path)** | **~15-25s** | **~15s** |
+| **TOTAL (text direct dispatch)** | **~5-8s** | **~5s** |
 
-### 3A — Whisper CUDA (HIGH ROI, MEDIUM complexity)
-- **Current:** STT takes 9-12s on CPU (FP32) — `UserWarning: FP16 is not supported on CPU`
-- **Fix options:**
-  - A) `pip install torch --index-url .../cu124` (~3GB) — enables GPU Whisper, ~0.5s STT
-  - B) Switch to `whisper.cpp` C++ binary + Python bindings — ~0.5s, no CUDA torch needed
-- **Impact:** Cuts 9-12s to ~0.5s on every single query — biggest single latency win
+### 3A — Whisper CUDA ✅ COMPLETE (commit a47b2f2)
+- **Result:** STT ~0.5-1s CUDA (was 9-12s CPU FP32)
 - **VRAM cost:** ~500MB during STT, released after transcription
 - **Files:** `agent/core/voice/stt.py`
-- **Recommendation:** Option A (CUDA torch) — simpler, already have CUDA environment
 
 ### 3B — Streaming TTS (HIGH ROI, HIGH complexity)
 - **Current:** Full LLM reply generated → THEN full Chatterbox synthesis → THEN playback
@@ -248,10 +251,10 @@ The base is functionally solid. Latency is the biggest remaining quality-of-life
 - ✅ _take_screenshot() returns screenshot_path on HTTP failure (no longer blocks fast-path)
 - ✅ Manual test passed: describes actual on-screen content (21:07 2026-04-01)
 
-### Phase 3: Latency (NEXT)
+### Phase 3: Latency (IN PROGRESS)
 **Goal:** Cut total response time from 20-45s to 10-20s
 **Items:**
-1. Whisper CUDA — STT 9-12s → ~0.5s (`stt.py` — package install)
+1. ✅ Whisper CUDA — STT 9-12s → ~0.5s (`stt.py` — commit a47b2f2)
 2. Model selection voice control — quick win (`wake_listener.py`)
 3. Streaming TTS — sentence-chunked synthesis (`model_router.py`, `tts.py`, `wake_listener.py`)
 
@@ -307,6 +310,9 @@ The base is functionally solid. Latency is the biggest remaining quality-of-life
 - ✅ ctrl+space → "what's on my screen" returns actual screen description
 - ✅ No false "can't see images" responses
 - ✅ llama_backend.chat() handles image bytes with vision model + mmproj
+
+**Phase 3A (Whisper CUDA): ✅ ACHIEVED**
+- ✅ STT < 1s on every query (Whisper CUDA commit a47b2f2)
 
 **End of Phase 3 (Latency):**
 - STT < 1s (Whisper CUDA)
