@@ -66,7 +66,7 @@ Function IsProcessRunning(processName)
     count = 0
     On Error Resume Next
     Set wmi = GetObject("winmgmts:\\.\root\cimv2")
-    Set processes = wmi.ExecQuery("SELECT * FROM Win32_Process WHERE Name='pythonw.exe'")
+    Set processes = wmi.ExecQuery("SELECT * FROM Win32_Process WHERE Name='python.exe' OR Name='pythonw.exe'")
     For Each process In processes
         If InStr(process.CommandLine, processName) > 0 Then
             count = count + 1
@@ -98,7 +98,7 @@ End Function
 Sub WaitForChatterbox()
     Dim attempts, port, url, http
 
-    For attempts = 1 To 12
+    For attempts = 1 To 24
         For port = 4123 To 4129
             url = "http://127.0.0.1:" & port & "/health"
             On Error Resume Next
