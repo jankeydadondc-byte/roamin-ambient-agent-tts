@@ -117,17 +117,19 @@ def _try_direct_dispatch(transcription: str, registry: ToolRegistry) -> dict | N
             return registry.execute("web_search", {"query": transcription})
 
     # --- Screen observation ---
-    screen_triggers = [
-        "what's on my screen",
-        "what is on my screen",
-        "what am i looking at",
-        "what do you see",
-        "what's on screen",
-        "describe my screen",
-        "look at my screen",
-        "what am i doing",
+    screen_patterns = [
+        r"what(?:'s| is| am i seeing| do you see| can you see) on (?:my |the )?screen",
+        r"what(?:'s| is) on (?:my |the )?display",
+        r"what am i (?:looking|staring) at",
+        r"describe (?:my |the |what(?:'s| is) on (?:my |the )?)?screen",
+        r"(?:look|looking) at (?:my |the )?screen",
+        r"(?:see|read|tell me about) (?:my |the )?screen",
+        r"what(?:'s| is) (?:this|that) on (?:my )?screen",
+        r"take a (?:screen ?shot|screenshot)",
+        r"screen ?shot",
+        r"what(?:'s| is) (?:on )?(?:my )?(?:screen|display|monitor)",
     ]
-    if any(t in lower for t in screen_triggers):
+    if any(re.search(p, lower) for p in screen_patterns):
         print("[Roamin] Direct dispatch: take_screenshot()")
         return registry.execute("take_screenshot", {})
 

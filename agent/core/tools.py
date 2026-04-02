@@ -487,12 +487,24 @@ def _take_screenshot(params: dict) -> dict:
 
         obs = ScreenObserver()
         result = obs.observe()
+        screenshot_path = result.get("screenshot_path")
+
         if "description" in result:
             return {
                 "success": True,
                 "result": result["description"],
-                "screenshot_path": result.get("screenshot_path"),
+                "screenshot_path": screenshot_path,
             }
+
+        # Vision API failed but screenshot was captured — still return success
+        # so the wake_listener vision fast-path can send image bytes to local LLM
+        if screenshot_path:
+            return {
+                "success": True,
+                "result": "Screenshot captured (no description available)",
+                "screenshot_path": screenshot_path,
+            }
+
         return _fail(result.get("error", "Screenshot failed"))
     except Exception as e:
         return _fail(str(e))
