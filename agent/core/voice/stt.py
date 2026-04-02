@@ -39,7 +39,8 @@ class SpeechToText:
         # Load Whisper model ONCE at init - using base model for reasonable accuracy/speed
         # Prefer CUDA if available (20x faster than CPU FP32)
         try:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            # Determine device: CUDA if available and torch imported, else CPU
+            device = "cuda" if (_silero_available and torch.cuda.is_available()) else "cpu"
             self._model = whisper.load_model(model_name, device=device)
             print(f"[Roamin] Whisper loaded on {device.upper()}")
         except Exception as e:
