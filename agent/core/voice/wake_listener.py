@@ -205,6 +205,8 @@ class WakeListener:
         self._tts = tts
         self._agent_loop = agent_loop
         self._wake_lock = threading.Lock()
+        self._last_wake_time = 0  # Track last wake trigger time (seconds)
+        self._wake_debounce_interval = 0.5  # Ignore triggers within 500ms
 
         if keyboard is None:
             print("[Warning] WakeListener not available (keyboard import failed)")
@@ -221,7 +223,7 @@ class WakeListener:
             return
 
         try:
-            keyboard.add_hotkey(self._hotkey, self._on_wake_thread)
+            keyboard.add_hotkey(self._hotkey, self._on_wake_thread, suppress=True)
             self.is_running = True
             print(f"[Roamin] Hotkey listener started: {self._hotkey}")
         except Exception as e:
@@ -240,7 +242,19 @@ class WakeListener:
             print(f"[Warning] Failed to unregister hotkey: {e}")
 
     def _on_wake_thread(self) -> None:
-        """Call _on_wake in a new thread (non-blocking). Drops if already running."""
+        """Call _on_wake in a new thread (non-blocking). Drops if already running or recently triggered."""
+        import time
+
+        now = time.time()
+
+        # Debounce: reject triggers within 500ms of last one (keyboard bounce/repeat)
+        if now - self._last_wake_time < self._wake_debounce_interval:
+            elapsed_ms = (now - self._last_wake_time) * 1000
+            print(f"[Roamin] Wake debounced (fired {elapsed_ms:.0f}ms after last)")
+            return
+
+        self._last_wake_time = now
+
         if not self._wake_lock.acquire(blocking=False):
             print("[Roamin] Wake already in progress, ignoring")
             return

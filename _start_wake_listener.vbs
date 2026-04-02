@@ -36,9 +36,10 @@ End If
 ' Wait for Chatterbox TTS API (optional, ports 4123-4129)
 WaitForChatterbox
 
-' Launch WakeListener in background window (style=0 = hidden)
+' Launch WakeListener in visible console window (style=1 = normal) for monitoring
+' Use python.exe (not pythonw) to enable console output during development
 Dim result
-result = shell.Run("""" & pythonw & """ """ & script & """", 0, False)
+result = shell.Run("""" & python & """ """ & script & """", 1, False)
 
 ' Log startup
 WriteLog "WakeListener started PID: " & result

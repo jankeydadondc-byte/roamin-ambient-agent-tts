@@ -179,6 +179,8 @@ def main() -> None:
     listener = WakeListener(hotkey="ctrl+space", stt=stt, tts=tts, agent_loop=agent_loop)
     listener.start()
     print("[Roamin] Ready. Press ctrl+space to activate.")
+    print(f"\n[Roamin] Log file: {log_path}")
+    print("[Roamin] Terminal will remain open for monitoring. Close to stop Roamin.\n")
 
     # Periodic log pruning (every 10 minutes)
     def _log_prune_loop():
