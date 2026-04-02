@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import difflib
 import io
 import re
 import sys
@@ -87,6 +88,96 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
         return False, 512
 
     return True, 60
+
+
+# ---------------------------------------------------------------------------
+# Voice model override — per-request routing to non-default models
+# ---------------------------------------------------------------------------
+
+# Stage 1: Exact prefix triggers — phrases without a spoken model name,
+# plus multi-word model references that Whisper reliably produces.
+_EXACT_MODEL_TRIGGERS: list[tuple[str, str, str]] = [
+    # Reasoning triggers → DeepSeek R1 8B
+    ("think really hard about ", "reasoning", "DeepSeek R1 8B"),
+    ("think hard about ", "reasoning", "DeepSeek R1 8B"),
+    ("really think about ", "reasoning", "DeepSeek R1 8B"),
+    ("reason through ", "reasoning", "DeepSeek R1 8B"),
+    ("deeply analyze ", "reasoning", "DeepSeek R1 8B"),
+    ("deep dive into ", "reasoning", "DeepSeek R1 8B"),
+    # "deep seek" — Whisper often splits "deepseek" into two words
+    ("use deep seek to ", "reasoning", "DeepSeek R1 8B"),
+    ("use deep seek ", "reasoning", "DeepSeek R1 8B"),
+    ("ask deep seek to ", "reasoning", "DeepSeek R1 8B"),
+    ("ask deep seek ", "reasoning", "DeepSeek R1 8B"),
+    # Coder triggers (no model name spoken) → Qwen3 Coder 80B
+    ("use the coder to ", "code", "Qwen3 Coder 80B"),
+    ("use the coder ", "code", "Qwen3 Coder 80B"),
+    ("use coder to ", "code", "Qwen3 Coder 80B"),
+    ("use coder ", "code", "Qwen3 Coder 80B"),
+    ("use the big model to ", "code", "Qwen3 Coder 80B"),
+    ("use the big model ", "code", "Qwen3 Coder 80B"),
+]
+
+# Stage 2: Fuzzy model name tokens.
+# Maps the canonical model name token → (capability_key, friendly_name).
+# Whisper garbles of these tokens are caught by difflib fuzzy matching.
+_FUZZY_MODEL_TOKENS: dict[str, tuple[str, str]] = {
+    "ministral": ("ministral_reasoning", "Ministral 14B"),
+    "deepseek": ("reasoning", "DeepSeek R1 8B"),
+}
+
+# Verbs that precede a spoken model name ("use X", "ask X", "hey X", "with X")
+_MODEL_VERB_TRIGGERS: frozenset[str] = frozenset({"use", "ask", "with", "hey"})
+
+# Similarity threshold for fuzzy model name matching (0.0–1.0).
+# 0.72 catches "ministerl"→"ministral" (≈0.78) while rejecting unrelated words.
+_FUZZY_MODEL_CUTOFF = 0.72
+
+
+def _detect_model_override(transcription: str) -> tuple[str | None, str, str | None]:
+    """Detect voice model-switching triggers in the transcription.
+
+    Two-stage detection:
+      1. Exact prefix match for non-model-name phrases (e.g. "think hard about")
+         and multi-word model references Whisper reliably produces ("deep seek").
+      2. Fuzzy match for verb + model-name patterns — catches Whisper garbles
+         like "use ministerl" → "ministral" without enumerating all variants.
+
+    Returns:
+        (capability_override, cleaned_transcription, model_name)
+        - capability_override: CAPABILITY_MAP key, or None if no match
+        - cleaned_transcription: transcription with trigger stripped, or original
+        - model_name: human-friendly model name for logging, or None
+    """
+    lower = transcription.lower().strip()
+
+    # --- Stage 1: Exact prefix match ---
+    for trigger, capability, model_name in _EXACT_MODEL_TRIGGERS:
+        if lower.startswith(trigger):
+            cleaned = transcription[len(trigger) :].strip()
+            if cleaned:
+                return capability, cleaned, model_name
+
+    # --- Stage 2: Verb + fuzzy model name ---
+    words = lower.split()
+    if len(words) >= 2 and words[0] in _MODEL_VERB_TRIGGERS:
+        candidate = words[1]
+        matches = difflib.get_close_matches(candidate, _FUZZY_MODEL_TOKENS.keys(), n=1, cutoff=_FUZZY_MODEL_CUTOFF)
+        if matches:
+            matched_token = matches[0]
+            capability, model_name = _FUZZY_MODEL_TOKENS[matched_token]
+            # Rebuild cleaned prompt: drop verb + model word + optional "to" connector
+            rest = words[2:]
+            if rest and rest[0] == "to":
+                rest = rest[1:]
+            cleaned = " ".join(rest).strip()
+            if cleaned:
+                print(
+                    f"[Roamin] Fuzzy model match: '{candidate}' → '{matched_token}' " f"(cutoff={_FUZZY_MODEL_CUTOFF})"
+                )
+                return capability, cleaned, model_name
+
+    return None, transcription, None
 
 
 def _try_direct_dispatch(transcription: str, registry: ToolRegistry) -> dict | None:
@@ -518,6 +609,13 @@ class WakeListener:
         reply = "Got it." if fact_stored else "Done."
         try:
             router = ModelRouter()
+
+            # Detect per-request model override (e.g. "use ministral to explain X")
+            model_override, clean_text, override_name = _detect_model_override(transcription)
+            task_type = model_override or "default"
+            if model_override:
+                print(f"[Roamin] Model override: {override_name} (capability: {model_override})")
+
             if tool_context:
                 system_content = (
                     "You are Roamin, a voice assistant. "
@@ -534,17 +632,27 @@ class WakeListener:
                 )
             if memory_context:
                 system_content += f"\n\n{memory_context}"
+
+            # Use cleaned transcription (trigger phrase stripped) in prompt
+            prompt_text = clean_text if model_override else transcription
             messages = [
                 {"role": "system", "content": system_content},
-                {"role": "user", "content": transcription},
+                {"role": "user", "content": prompt_text},
             ]
             no_think, think_max_tokens = _classify_think_level(transcription)
+
+            # Model override implies the user wants a thoughtful answer —
+            # bump minimum tokens if think level is OFF
+            if model_override and no_think:
+                no_think = False
+                think_max_tokens = max(think_max_tokens, 512)
+
             if tool_context and think_max_tokens < 200:
                 think_max_tokens = 200
             print(f"[Roamin] Think level: no_think={no_think}, max_tokens={think_max_tokens}")
             reply = router.respond(
-                "default",
-                transcription,
+                task_type,
+                prompt_text,
                 messages=messages,
                 max_tokens=think_max_tokens,
                 temperature=0.6 if not no_think else 0.7,
@@ -567,9 +675,10 @@ class WakeListener:
 
         # Store conversation in memory
         try:
+            model_label = override_name or "Qwen3-VL-8B"
             memory.write_to_memory(
                 "conversation",
-                {"session_id": "voice_interface", "model_used": "whisper", "content": f"User: {transcription}"},
+                {"session_id": "voice_interface", "model_used": model_label, "content": f"User: {transcription}"},
             )
         except Exception:
             pass
