@@ -1,12 +1,13 @@
 Option Explicit
 
-Dim shell, fso, pythonw, script, workingDir, logFile, pid
+Dim shell, fso, pythonw, python, script, workingDir, logFile, pid
 
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
 ' Paths (all in NEW repo)
 pythonw = "C:\AI\roamin-ambient-agent-tts\.venv\Scripts\pythonw.exe"
+python = "C:\AI\roamin-ambient-agent-tts\.venv\Scripts\python.exe"
 script = "C:\AI\roamin-ambient-agent-tts\run_wake_listener.py"
 workingDir = "C:\AI\roamin-ambient-agent-tts"
 logFile = "C:\AI\roamin-ambient-agent-tts\logs\startup.log"
@@ -33,7 +34,14 @@ If IsProcessRunning("run_wake_listener") Then
     WScript.Quit 0
 End If
 
-' Wait for Chatterbox TTS API (optional, ports 4123-4129)
+' Launch Chatterbox TTS API if not already running (voice clone + fast TTS)
+If Not IsChatterboxRunning() Then
+    WriteLog "Starting Chatterbox TTS API..."
+    shell.Run "cmd.exe /c ""C:\AI\chatterbox-api\_start.bat""", 0, False
+    WScript.Sleep 3000
+End If
+
+' Wait up to ~30s for Chatterbox to be ready (optional — Roamin falls back to SAPI if not up)
 WaitForChatterbox
 
 ' Launch WakeListener in visible console window (style=1 = normal) for monitoring
@@ -68,10 +76,29 @@ Function IsProcessRunning(processName)
     IsProcessRunning = (count > 0)
 End Function
 
+Function IsChatterboxRunning()
+    Dim port, url, http
+    For port = 4123 To 4129
+        url = "http://127.0.0.1:" & port & "/health"
+        On Error Resume Next
+        Set http = CreateObject("MSXML2.XMLHTTP")
+        http.Open "GET", url, False
+        http.Send
+        If http.Status = 200 Then
+            Set http = Nothing
+            IsChatterboxRunning = True
+            Exit Function
+        End If
+        On Error GoTo 0
+        Set http = Nothing
+    Next
+    IsChatterboxRunning = False
+End Function
+
 Sub WaitForChatterbox()
     Dim attempts, port, url, http
 
-    For attempts = 1 To 20
+    For attempts = 1 To 12
         For port = 4123 To 4129
             url = "http://127.0.0.1:" & port & "/health"
             On Error Resume Next
@@ -85,7 +112,7 @@ Sub WaitForChatterbox()
             On Error GoTo 0
             Set http = Nothing
         Next
-        WScript.Sleep 3000
+        WScript.Sleep 5000
     Next
 End Sub
 
