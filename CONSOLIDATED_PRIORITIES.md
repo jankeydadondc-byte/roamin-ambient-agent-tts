@@ -1,6 +1,6 @@
 # Roamin Consolidated Priorities — Unified Roadmap
 
-**Date:** 2026-04-01 (updated after resilience pass)
+**Date:** 2026-04-01 (updated after vision completion)
 **Scope:** Merge "still needs work" items with Prioritized Improvement Batch into single coherent roadmap
 **Focus:** Most important to stability and solid build first
 
@@ -34,159 +34,135 @@
 - Currently only direct dispatch → AgentLoop fallback exists
 - No tool-to-tool fallback within AgentLoop itself
 - **Files:** `agent/core/agent_loop.py`, `agent/core/tool_registry.py`
+- **Priority:** Low — not blocking daily use
 
-**Impact:** Priority 1 is now substantially complete. Remaining gaps are incremental improvements, not blockers.
-
----
-
-## PRIORITY 2: VISION CAPABILITY COMPLETION
-
-**Why second:** Your screen observer fires but can't actually show what's on screen. This is a core advertised feature that needs to work.
-
-### Already Implemented
-- ✅ Screen observation fires correctly via direct dispatch
-- ✅ Screenshot saved to `workspace/screenshots/`
-- ✅ Vision model (Ministral 3 14B + mmproj) registered in CAPABILITY_MAP
-- ✅ **Default model upgraded to Qwen3-VL-8B abliterated (2026-04-01)**
-  - Unified model: chat + vision + fast in one 4.7GB GGUF (Q4_K_M, uncensored)
-  - Source: `prithivMLmods/Qwen3-VL-8B-Instruct-abliterated-v2-GGUF`
-  - mmproj: Q8_0 (718MB) for multimodal projection
-  - CAPABILITY_MAP routes default/chat/fast/vision/screen_reading to this model
-  - _MMPROJ_MAP auto-resolves mmproj per model path (no hardcoded capability checks)
-  - VRAM: 4.7GB model + 718MB mmproj vs old 14GB Qwen3 8B — frees ~9GB headroom
-
-### Remaining Gap: Vision Routing (from "still needs work" #1)
-
-#### 1. Screen Observation Vision Routing — PARTIALLY ADDRESSED
-- **Previous state:** Default model (Qwen3 8B) had no vision — responded "I can't see images"
-- **Current state:** Default model (Qwen3-VL-8B) has native vision capability
-- **Remaining work:** Verify `take_screenshot()` passes image bytes correctly to llama_backend `chat()` with mmproj loaded. Direct dispatch pattern matching should now route vision queries to a capable model without special routing logic.
-- **Test case:** ctrl+space → "what's on my screen" → should describe actual screen content
-- **Status:** Pending manual end-to-end verification
-
-#### 2. Feature Readiness Checks
-- Pre-flight checks for vision dependencies (pyautogui, PIL, mmproj model loaded)
-- Graceful degradation if certain features unavailable
-- **Files:** `agent/core/screen_observer.py`, `agent/core/voice/wake_listener.py`
-
-#### 3. Capability-Based Access Control
-- Enable/disable features via configuration or user permissions
-- Prevents "vision mode" from trying to process text-only queries incorrectly
-- **Files:** `agent/core/agent_loop.py` (feature flag system)
-
-**Impact:** Core advertised feature now has a capable model. Pending manual verification of end-to-end image processing pipeline.
+**Impact:** Priority 1 is substantially complete. Remaining gap is incremental, not a blocker.
 
 ---
 
-## PRIORITY 3: PLUGIN SYSTEM FOUNDATION
+## PRIORITY 2: VISION CAPABILITY COMPLETION — ✅ COMPLETE
 
-**Why third:** Even if unused initially, this enables future extensibility without breaking stability.
+**Completed 2026-04-01** — full end-to-end image pipeline working.
 
-### Planned Enhancements
+### Verified Working (Manual test 2026-04-01 21:07)
+- ✅ Screen observation fires via direct dispatch (expanded regex trigger patterns)
+- ✅ Screenshot saved to `workspace/screenshots/` as PNG
+- ✅ `_take_screenshot()` returns `screenshot_path` even when HTTP vision API fails
+- ✅ Vision fast-path in `wake_listener.py` loads screenshot, PIL-resizes to 1024x1024, base64-encodes
+- ✅ Multimodal message with `image_url` block sent to `router.respond("vision", messages=...)`
+- ✅ `LlamaCppBackend.chat()` detects list-type content → routes to `create_chat_completion()`
+- ✅ `Qwen25VLChatHandler` invokes mmproj vision encoder (PNG STREAM markers confirm)
+- ✅ Qwen3-VL-8B-abliterated describes actual on-screen content:
+  > *"You're looking at a code review interface where you're verifying test changes and planning to restart your development environment."*
 
-#### 1. Plugin Isolation and Sandboxing
-- Run plugins in isolated environments (venv containers or virtual threads with restricted access)
-- Prevents one bad plugin from crashing the whole agent
-- **Files:** `agent/core/plugin_loader.py` (new file)
+### Key Commits (Vision Pass)
+- `88a0905` — Model upgrade to Qwen3-VL-8B abliterated + CAPABILITY_MAP + model_config
+- `2d571b5` — Wire vision image bytes: chat_handler, multimodal branch, wake_listener fast-path
+- `e63dcef` — Expand screen triggers (regex) + fix screenshot_path return on HTTP failure
 
-#### 2. Graceful Task Termination for Plugins
-- Ensures plugin cancellation properly releases resources
-- Critical for long-running tool executions
-- **Files:** `agent/core/agent_loop.py`, `agent/core/plugin_loader.py`
-
-#### 3. Plugin Security Basics
-- Restrict file operations in plugins to specific directories
-- Prevents plugins from accessing sensitive system files
-- **Files:** `agent/core/tool_registry.py`, `agent/core/plugin_loader.py`
-
-#### 4. Structured Error Reporting for Plugins
-- Plugin failures don't crash the agent, just emit errors
-- **Files:** `agent/core/agent_loop.py`
-
-**Impact:** Safe extensibility. Can add tools/plugins later without risking system stability.
+### Remaining (Non-Blocking)
+- Feature readiness checks: pre-flight for vision deps (PIL, mmproj loaded)
+- Capability-based access control (vision mode vs text-only queries)
+- Both deferred to later pass — core vision works
 
 ---
 
-## PRIORITY 4: ASYNC PERFORMANCE & RESOURCE MANAGEMENT
+## PRIORITY 3: LATENCY REDUCTION — NEXT FOCUS
 
-**Why fourth:** Once stable and functional, we optimize for responsiveness and prevent resource starvation.
+**Why now:** Vision works but end-to-end time is 20-45s. This degrades daily usability significantly.
+The base is functionally solid. Latency is the biggest remaining quality-of-life gap before adding features.
 
-### Remaining Latency Optimizations (from "still needs work")
+### Observed Timings (Post-Vision, 2026-04-01)
+| Phase | Observed | Target |
+|---|---|---|
+| Wake phrase (cached) | ~2.7s | ~2.7s ✅ |
+| STT (VAD + Whisper CPU) | ~9-12s | ~1s |
+| Direct dispatch | ~0.5s | ~0.5s ✅ |
+| Vision reply generation | ~7s | ~5s |
+| Text reply generation | ~0.5-2s | ~0.5s ✅ |
+| TTS (novel reply, Chatterbox) | ~8-26s | ~3-5s |
+| **TOTAL (vision path)** | **~45s** | **~15s** |
+| **TOTAL (text direct dispatch)** | **~13-16s** | **~8-10s** |
 
-#### 1. Streaming TTS (from "still needs work" #4)
-- **Current:** Qwen3 generates full reply (~1.5s), THEN Chatterbox synthesizes (~12-22s)
-- **Problem:** User hears silence during reply generation, then waits for TTS
-- **Opportunity:** Biggest remaining latency win (~50% cut to perceived response time)
-- **Solution:** Pipe model output sentence-by-sentence to Chatterbox as they complete
-  - Requires rewriting `router.respond()` to yield tokens instead of returning full reply
-  - **Note:** Chatterbox `/v1/audio/speech` likely does NOT support streaming (OpenAI-compat)
-  - Alternative: sentence-level chunking — synthesize first sentence while generating rest
-  - `model_router.respond()` currently returns `str`, both backends set `stream: False`
-- **Complexity:** HIGH — refactor model output streaming + sentence splitting
-- **Files:** `agent/core/model_router.py`, `agent/core/voice/tts.py`, `agent/core/voice/wake_listener.py`
-
-#### 2. Whisper CUDA (from "still needs work" #5)
-- **Current:** STT takes 5-6s on CPU (FP32)
-- **Problem:** Accounts for ~25-30% of total response time
-- **Options:**
-  - A) Install CUDA torch (~3GB disk, ~500MB VRAM during STT)
-  - B) Switch to whisper.cpp (C++ implementation, ~0.5s)
-- **Impact:** Would cut STT to ~0.5s, total latency ~18-25s down to ~12-18s
-- **Complexity:** MEDIUM — package swap
+### 3A — Whisper CUDA (HIGH ROI, MEDIUM complexity)
+- **Current:** STT takes 9-12s on CPU (FP32) — `UserWarning: FP16 is not supported on CPU`
+- **Fix options:**
+  - A) `pip install torch --index-url .../cu124` (~3GB) — enables GPU Whisper, ~0.5s STT
+  - B) Switch to `whisper.cpp` C++ binary + Python bindings — ~0.5s, no CUDA torch needed
+- **Impact:** Cuts 9-12s to ~0.5s on every single query — biggest single latency win
+- **VRAM cost:** ~500MB during STT, released after transcription
 - **Files:** `agent/core/voice/stt.py`
+- **Recommendation:** Option A (CUDA torch) — simpler, already have CUDA environment
 
-#### 3. Asynchronous Task Execution
-- Leverage Python's `asyncio` for non-blocking task execution
-- I/O-bound operations: API calls, file operations, web searches
-- Currently blocking calls can freeze the agent during web searches or large file reads
-- **Files:** `agent/core/agent_loop.py`, `agent/core/tools.py`
+### 3B — Streaming TTS (HIGH ROI, HIGH complexity)
+- **Current:** Full LLM reply generated → THEN full Chatterbox synthesis → THEN playback
+- **Problem:** User hears nothing for 8-26s after reply is ready
+- **Opportunity:** Sentence-level chunking — synthesize first sentence while LLM generates rest
+  - Split reply on `.`, `?`, `!` after first sentence (~10-20 tokens)
+  - Begin Chatterbox synthesis of sentence 1 while model continues generating
+  - Queue remaining sentences; play in order
+- **Note:** `Chatterbox /v1/audio/speech` is OpenAI-compat — no true streaming
+  - True streaming requires chunked HTTP response reading or websocket
+  - Sentence-chunking is simpler and achieves ~60% of the latency win
+- **Impact:** First words spoken ~5-8s earlier; perceived response feels near-instant
+- **Complexity:** HIGH — requires `router.respond()` to yield tokens + sentence splitter + TTS queue
+- **Files:** `agent/core/model_router.py`, `agent/core/voice/tts.py`, `agent/core/voice/wake_listener.py`
+- **Recommendation:** Tackle AFTER Whisper CUDA (lower complexity first)
 
-#### 4. Background Task Cleanup
-- Automatically clean up completed/timed-out tasks to avoid memory leaks
-- Example: N.E.K.O's `_cleanup_task_registry()` and `_cleanup_of_bg()`
-- **Files:** `agent/core/agent_loop.py`
-
-#### 5. Resource Monitoring and Throttling (from "still needs work" #7 - TurboQuant)
-- Monitor CPU/memory/GPU usage
-- Implement throttling for high-frequency tasks (API rate limits)
-- **TurboQuant KV cache compression** (deferred):
-  - Would free ~1-4GB VRAM during inference
-  - Requires migrating from llama-cpp-python to HuggingFace or vLLM
-  - Package status: 0.2.0 alpha (released 2026-03-27) — evaluate next quarter
-- **Files:** `agent/core/llama_backend.py`, `agent/core/model_router.py`
-
-#### 6. Model Selection — Voice Control (from "still needs work" #2)
-- **Current state:** Hardcoded in CAPABILITY_MAP, auto-selected by keyword
-- **Problem:** No voice-controlled way to pick model (Ministral 14B for complex tasks)
+### 3C — Model Selection Voice Control (LOW complexity)
+- **Current:** Task→model routing is hardcoded in CAPABILITY_MAP + `_classify_task()`
+- **Problem:** No way to ask for heavier reasoning model by voice
 - **Options:**
-  - A) Voice trigger words ("use ministral", "think hard")
-  - B) Memory preference ("my preferred reasoning model is ministral")
-  - C) Query prefix ("ministral: what's on my screen")
-- **Note:** Ministral 14B capabilities registered but nothing routes to them yet
-- **Complexity:** LOW-MEDIUM — add routing rules
-- **Files:** `agent/core/model_router.py`, `agent/core/voice/wake_listener.py`
-
-**Impact:** Reduced latency, prevents resource exhaustion, smoother operation. Perceived response time cut to ~12-18s.
+  - A) Voice trigger words: "think hard", "use ministral" → route to ministral_reasoning
+  - B) Query prefix: "deep: explain quantum entanglement" → force reasoning model
+- **Impact:** Moderate — Ministral 14B capabilities registered but unreachable
+- **Files:** `agent/core/voice/wake_listener.py` (trigger words in `_try_direct_dispatch` or pre-classify)
+- **Recommendation:** Do alongside or before 3B as a quick win
 
 ---
 
-## PRIORITY 5: TASK EXECUTION ROBUSTNESS
+## PRIORITY 4: TASK EXECUTION ROBUSTNESS
 
-**Why fifth:** Once stable and functional with vision working, handle task scheduling intelligently.
+**Why fourth:** Once latency is addressed, handle edge cases in task handling.
 
 ### Planned Enhancements
 
 #### 1. Task Deduplication
-- Prevent redundant task execution if same instruction queued multiple times
-- Double-launch is fixed at VBS level, but AgentLoop itself has no dedup
+- Prevent redundant execution if same intent queued multiple times rapidly
+- Thread guard already blocks concurrent *wake presses*, but AgentLoop has no dedup
 - **Files:** `agent/core/agent_loop.py`
+- **Complexity:** LOW
 
 #### 2. Dynamic Task Prioritization
 - Priority-based queue system (high/medium/low)
-- Can assign based on urgency or user input
+- Can assign based on urgency keywords or user input
 - **Files:** `agent/core/agent_loop.py`
+- **Complexity:** MEDIUM
 
 **Impact:** More reliable multi-task handling, prevents spamming agent with same request.
+
+---
+
+## PRIORITY 5: PLUGIN SYSTEM FOUNDATION
+
+**Why fifth:** Enables future extensibility without breaking stability.
+
+### Planned Enhancements
+
+#### 1. Plugin Isolation and Sandboxing
+- Run plugins in isolated environments (virtual threads with restricted access)
+- Prevents one bad plugin from crashing the whole agent
+- **Files:** `agent/core/plugin_loader.py` (new file)
+
+#### 2. Plugin Security Basics
+- Restrict file operations in plugins to specific directories
+- **Files:** `agent/core/tool_registry.py`, `agent/core/plugin_loader.py`
+
+#### 3. Structured Error Reporting for Plugins
+- Plugin failures don't crash the agent, just emit errors
+- **Files:** `agent/core/agent_loop.py`
+
+**Impact:** Safe extensibility. Can add tools/plugins later without risking system stability.
 
 ---
 
@@ -208,17 +184,16 @@
 
 #### 3. Task History and Logging
 - Maintain history of executed tasks with timestamps, results
-- Critical for debugging complex workflows
 - **Files:** `agent/core/memory/memory_manager.py`
 
-#### 4. RoaminCP UI Integration (from "still needs work" #6)
+#### 4. RoaminCP UI Integration
 - **Current state:** RoaminCP UI exists (Tauri + React, Monaco editor, xterm terminal, diff viewer)
   - Location: `C:\AI\os_agent\ui\roamin-control`
   - Not yet connected to ambient agent
   - Control API still points at os_agent, not new repo
 - **Solution:** Wire RoaminCP to this repo's Control API, add websocket event streaming
 - **Complexity:** MEDIUM-HIGH — cross-repo integration
-- **Timeline:** After vision routing + streaming TTS complete
+- **Timeline:** After streaming TTS complete
 - **Files:** `agent/core/api.py` (new), wiring to RoaminCP
 
 **Impact:** Better user feedback, easier troubleshooting, more transparent operation.
@@ -227,18 +202,16 @@
 
 ## PRIORITY 7: SECURITY & INTEGRATION HARDENING
 
-**Why seventh:** Once everything else works well, harden the perimeter and prepare for production deployment.
+**Why seventh:** Once everything else works well, harden for production.
 
 ### Planned Enhancements
 
 #### 1. API Key Management
 - Secure management of credentials via environment variables/secrets manager
-- Currently avoid hardcoded values but no central system
 - **Files:** `agent/core/config.py`
 
 #### 2. LLM Proxy Layer
 - Normalize responses from different LLM providers
-- Current model routing is internal, not provider-agnostic
 - **Files:** `agent/core/model_router.py` (refactor)
 
 #### 3. Browser Automation
@@ -252,57 +225,44 @@
 
 ## EXECUTION ROADMAP (by phase)
 
-### Phase 1: Stabilization (COMPLETE ✅)
+### Phase 1: Stabilization ✅ COMPLETE
 - ✅ Fix 5 critical bugs (Stabilization Pass — 2026-03-31)
 - ✅ Test end-to-end voice flow
 - ✅ Verify direct dispatch + AgentLoop both functional
 
-### Phase 1.5: Resilience (COMPLETE ✅)
+### Phase 1.5: Resilience ✅ COMPLETE
 - ✅ Double-launch VBS fix
 - ✅ AgentLoop cancellation + 30s tool timeouts
 - ✅ HTTP retry with exponential backoff
 - ✅ Direct dispatch fallback to AgentLoop
 - ✅ Input validation + structured error categories
 - ✅ Log prune 40KB limit
-- ✅ Manual test passed: 4 wakes, all successful, thread guard confirmed
 
-### Phase 2: Vision (IN PROGRESS)
-**Estimated:** 1-2 days
-**Items:** Priority 2 (vision routing)
+### Phase 2: Vision ✅ COMPLETE (2026-04-01)
 - ✅ Downloaded Qwen3-VL-8B abliterated (Q4_K_M, 4.7GB) + mmproj (Q8_0, 718MB)
 - ✅ Updated CAPABILITY_MAP: default/chat/fast/vision/screen_reading → Qwen3-VL-8B
-- ✅ Added _MMPROJ_MAP for auto-resolving mmproj per model path
-- ✅ Updated model_config.json routing rules + fallback chain
-- ✅ Unit tests passed (CAPABILITY_MAP routing, file existence, mmproj lookup)
-- ⬜ Manual test: ctrl+space → "what's on my screen" → actual description
-- ⬜ Verify image bytes pipeline (take_screenshot → llama_backend.chat with mmproj)
+- ✅ chat_handler (Qwen25VLChatHandler) replaces raw mmproj= kwarg
+- ✅ Multimodal branch in LlamaCppBackend.chat() → create_chat_completion()
+- ✅ Vision fast-path in wake_listener: screenshot → base64 → image_url → vision LLM
+- ✅ Expanded screen trigger regex patterns (8 substrings → 10 regex)
+- ✅ _take_screenshot() returns screenshot_path on HTTP failure (no longer blocks fast-path)
+- ✅ Manual test passed: describes actual on-screen content (21:07 2026-04-01)
 
-### Phase 3: Task Scheduling (AFTER VISION)
-**Estimated:** 1-2 days
-**Items:** Priority 5 (task handling)
-1. Task deduplication + prioritization (agent_loop.py)
+### Phase 3: Latency (NEXT)
+**Goal:** Cut total response time from 20-45s to 10-20s
+**Items:**
+1. Whisper CUDA — STT 9-12s → ~0.5s (`stt.py` — package install)
+2. Model selection voice control — quick win (`wake_listener.py`)
+3. Streaming TTS — sentence-chunked synthesis (`model_router.py`, `tts.py`, `wake_listener.py`)
 
-### Phase 4: Latency Optimization (PARALLEL)
-**Estimated:** 3-5 days
-**Items:** Priority 4 (async, streaming, CUDA)
-1. Streaming TTS (model_router.py → yield tokens, tts.py → consume stream)
-2. Whisper CUDA (stt.py — package swap)
-3. Model selection voice control (model_router.py + wake_listener.py)
-4. Async task execution (agent_loop.py, tools.py)
+### Phase 4: Task Robustness
+**Items:** Priority 4 (deduplication, prioritization)
 
-### Phase 5: UX & Extensibility (ASYNC)
-**Estimated:** 4-6 days
-**Items:** Priority 3 (plugins) + Priority 6 (UX)
-1. Plugin isolation & sandboxing (plugin_loader.py new)
-2. Task history & notifications (memory_manager.py + tts.py)
-3. RoaminCP UI integration (control_api.py new)
+### Phase 5: UX & Extensibility
+**Items:** Priority 5 (plugins) + Priority 6 (UX, RoaminCP)
 
-### Phase 6: Security Hardening (FINAL)
-**Estimated:** 2-3 days
-**Items:** Priority 7 (security)
-1. API key management (config.py new)
-2. LLM proxy layer (model_router.py refactor)
-3. Browser automation tools (tools.py extend)
+### Phase 6: Security Hardening
+**Items:** Priority 7
 
 ---
 
@@ -316,17 +276,16 @@
 - ✅ Structured error reporting (FIXED — resilience pass)
 - ✅ Fallback mechanisms (FIXED — resilience pass)
 - ✅ Double-launch race (FIXED — resilience pass)
-- Screen observation vision routing → MODEL UPGRADED, pending manual e2e test
+- ✅ Vision pipeline end-to-end (FIXED — vision pass 2026-04-01)
 
-### High (Improve Reliability)
+### High (Improve Usability)
+- **Whisper CUDA** — 9-12s STT is painful on every query
+- **Streaming TTS** — 8-26s silent wait after reply ready
+
+### Medium (Quality of Life)
+- Model selection voice control
 - Task deduplication
 - Plugin-level fallback chains
-
-### Medium (Latency & UX)
-- Streaming TTS
-- Whisper CUDA
-- Model selection voice control
-- Task progress updates
 
 ### Low (Nice-to-Have)
 - Plugin system
@@ -339,20 +298,21 @@
 
 **End of Phase 1.5 (Resilience): ✅ ACHIEVED**
 - No hangs > 30s (tool timeouts fire) ✅
-- API errors retry exponentially (2x with 1s, 2s backoff) ✅
-- Invalid inputs rejected gracefully (URL scheme, size limits, control chars) ✅
+- API errors retry exponentially ✅
+- Invalid inputs rejected gracefully ✅
 - Failed direct dispatch falls through to AgentLoop ✅
 - Rapid ctrl+space drops duplicate presses ✅
 
-**End of Phase 2 (Vision):**
-- ctrl+space → "what's on my screen" returns actual screen description
-- No false "can't see images" responses
-- llama_backend.chat() handles image bytes with vision model + mmproj
+**End of Phase 2 (Vision): ✅ ACHIEVED**
+- ✅ ctrl+space → "what's on my screen" returns actual screen description
+- ✅ No false "can't see images" responses
+- ✅ llama_backend.chat() handles image bytes with vision model + mmproj
 
-**End of Phase 4 (Latency):**
-- Streaming TTS perceivable (reply starts during final LLM tokens)
-- STT < 1s (CUDA enabled)
+**End of Phase 3 (Latency):**
+- STT < 1s (Whisper CUDA)
+- First word spoken < 5s after STT completes (streaming TTS)
 - Total latency < 20s for typical query
+- Total latency < 30s for vision query
 
 **Production Ready:**
 - All Priority 1-5 items complete
