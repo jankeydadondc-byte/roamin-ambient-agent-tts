@@ -92,7 +92,7 @@ def _synthesize_to_file(text: str, url: str, dest: Path, exaggeration: float = 0
             payload: dict = {"input": text, "exaggeration": exaggeration, "cfg_weight": cfg_weight}
             if _VOICE_SAMPLE.exists():
                 payload["voice"] = "voice-sample"
-            timeout = min(30 + len(text) // 10, 120)
+            timeout = min(15 + len(text) // 10, 25)
             r = _requests.post(f"{url}/v1/audio/speech", json=payload, timeout=timeout)
             r.raise_for_status()
             dest.write_bytes(r.content)
@@ -199,26 +199,52 @@ class TextToSpeech:
             if _synthesize_to_file(text, url, out):
                 self._play_wav(out)
             else:
+                print("[TTS] Chatterbox synthesis failed — falling back to SAPI")
                 self._speak_pyttsx3(text)
         except Exception as e:
-            print(f"[TTS] Chatterbox error: {e} — falling back to pyttsx3")
+            print(f"[TTS] Chatterbox error: {e} — falling back to SAPI")
             self._speak_pyttsx3(text)
+
+    def _speak_sapi_subprocess(self, text: str) -> None:
+        """Speak via Windows SAPI using PowerShell — works from any thread, no COM affinity."""
+        import subprocess
+
+        safe = text.replace("'", "''")  # escape single quotes for PowerShell
+        try:
+            subprocess.run(
+                [
+                    "powershell",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    (
+                        "Add-Type -AssemblyName System.Speech; "
+                        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                        f"$s.Speak('{safe}')"
+                    ),
+                ],
+                timeout=30,
+                check=False,
+            )
+        except Exception as e:
+            print(f"[TTS] SAPI fallback error: {e}")
 
     def _speak_pyttsx3(self, text: str) -> None:
         import threading
 
-        if self._pyttsx3_engine is None:
-            print(f"[TTS] (no engine) {text}")
-            return
         if threading.current_thread() is not threading.main_thread():
-            # pyttsx3 COM calls deadlock outside the main thread on Windows
-            print(f"[TTS] (pyttsx3 skipped, not main thread) {text}")
+            # pyttsx3 COM calls deadlock outside the main thread on Windows — use SAPI instead
+            self._speak_sapi_subprocess(text)
+            return
+        if self._pyttsx3_engine is None:
+            self._speak_sapi_subprocess(text)
             return
         try:
             self._pyttsx3_engine.say(text)
             self._pyttsx3_engine.runAndWait()
         except Exception as e:
             print(f"[TTS] pyttsx3 error: {e}")
+            self._speak_sapi_subprocess(text)
 
     def _play_wav(self, path: Path) -> None:
         """Play a WAV file using winsound."""
