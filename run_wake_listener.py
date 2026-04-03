@@ -1,22 +1,27 @@
 """Startup entry point for WakeListener — run this to start ctrl+space."""
 
-import atexit
-import logging
+# Must be set before ANY imports — Rust extensions (primp/ddgs) read RUST_LOG
+# at initialization time. Setting it inside main() is too late.
 import os
-import signal
-import socket
-import sys
-import threading
-import time
-from pathlib import Path
 
-import keyboard  # noqa: F401 - validates keyboard is available before blocking
+os.environ["RUST_LOG"] = "warn"
 
-from agent.core.agent_loop import AgentLoop
-from agent.core.model_router import ModelRouter
-from agent.core.voice.stt import SpeechToText
-from agent.core.voice.tts import TextToSpeech
-from agent.core.voice.wake_listener import WakeListener
+import atexit  # noqa: E402
+import logging  # noqa: E402
+import signal  # noqa: E402
+import socket  # noqa: E402
+import sys  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import keyboard  # noqa: E402,F401 - validates keyboard is available before blocking
+
+from agent.core.agent_loop import AgentLoop  # noqa: E402
+from agent.core.model_router import ModelRouter  # noqa: E402
+from agent.core.voice.stt import SpeechToText  # noqa: E402
+from agent.core.voice.tts import TextToSpeech  # noqa: E402
+from agent.core.voice.wake_listener import WakeListener  # noqa: E402
 
 # Constants
 LOCK_FILE = Path(__file__).parent / "logs" / "_wake_listener.lock"
@@ -165,7 +170,7 @@ def main() -> None:
         format="%(asctime)s - %(levelname)s - %(message)s",
         handlers=[logging.StreamHandler(log_file)],
     )
-    for noisy in ("comtypes", "urllib3", "httpx", "chromadb", "posthog", "primp", "ddgs"):
+    for noisy in ("comtypes", "urllib3", "httpx", "chromadb", "posthog", "primp", "ddgs", "h2", "hpack", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     # Single-instance guard

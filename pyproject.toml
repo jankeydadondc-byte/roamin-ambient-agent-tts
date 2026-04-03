@@ -17,6 +17,11 @@ line_length = 120
 [tool.flake8]
 max-line-length = 120
 extend-ignore = ["E203"]
+per-file-ignores = [
+    # RUST_LOG must be set before any imports so Rust extensions initialize at WARN level.
+    # E402 (module level import not at top of file) is intentional here.
+    "run_wake_listener.py:E402",
+]
 
 [tool.mypy]
 python_version = "3.12"
