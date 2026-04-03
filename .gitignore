@@ -45,3 +45,6 @@ agent/core/voice/tmp/
 # Claude Code worktrees
 .claude/
 workspace/
+
+# Reference material — not part of the build
+N.E.K.O/
