@@ -1,6 +1,6 @@
 # Roamin Consolidated Priorities — Unified Roadmap
 
-**Date:** 2026-04-02 (updated after latency pass + bug-fix session)
+**Date:** 2026-04-03 (updated after Phase 3C complete + token/context pass)
 **Scope:** Merge "still needs work" items with Prioritized Improvement Batch into single coherent roadmap
 **Focus:** Most important to stability and solid build first
 
@@ -34,6 +34,15 @@
 - ✅ TTS truncation on long replies — timeout cap extended 25s → 33s (`tts.py`)
 - ✅ AgentLoop hallucination fallback — safety net forces `web_search` if plan executed no tools + "search" in query (`wake_listener.py`)
 - ✅ AgentLoop system prompt strengthened — explicit MUST-use-tool mandate (`agent_loop.py`)
+
+### Also Fixed (Phase 3C + Stability Pass — 2026-04-02/03)
+- ✅ Duplicate process guard — WMI query now checks `python.exe OR pythonw.exe`; was blind to visible-terminal launches (`_start_wake_listener.vbs`)
+- ✅ Chatterbox cold-start timeout — doubled from 60s to 120s; CUDA model load takes 90-120s; phrase cache was skipping → SAPI voice all session (`_start_wake_listener.vbs`)
+- ✅ `_start_silent.vbs` LM Studio dependency — removed 20-line wait loop; replaced with 10s boot delay (`_start_silent.vbs`)
+- ✅ Model selection voice control (Phase 3C) — `difflib` fuzzy matching replaces 36-entry Whisper alias list; two-stage detection catches garbles like "ministerial"→"ministral" at 0.72 cutoff (`wake_listener.py`)
+- ✅ Per-capability n_ctx — reasoning/ministral now load with 32768 context (was 8192); eliminates context overflow on long `<think>` chains (`llama_backend.py`)
+- ✅ Per-capability max_tokens floor — model overrides now apply 2048 floor for reasoning/ministral, 1024 for code; prevents `<think>` chain crowding out spoken answer (`wake_listener.py`)
+- ✅ Rust TLS debug spam — `RUST_LOG=warn` moved before all imports; primp reads it at init time, not at `main()` call; `h2`/`hpack`/`httpcore` added to Python noisy-logger list (`run_wake_listener.py`)
 
 ### Remaining Gaps
 
@@ -112,15 +121,14 @@ The base is functionally solid. Latency is the biggest remaining quality-of-life
 - **Files:** `agent/core/model_router.py`, `agent/core/voice/tts.py`, `agent/core/voice/wake_listener.py`
 - **Recommendation:** Tackle AFTER Whisper CUDA (lower complexity first)
 
-### 3C — Model Selection Voice Control (LOW complexity)
-- **Current:** Task→model routing is hardcoded in CAPABILITY_MAP + `_classify_task()`
-- **Problem:** No way to ask for heavier reasoning model by voice
-- **Options:**
-  - A) Voice trigger words: "think hard", "use ministral" → route to ministral_reasoning
-  - B) Query prefix: "deep: explain quantum entanglement" → force reasoning model
-- **Impact:** Moderate — Ministral 14B capabilities registered but unreachable
-- **Files:** `agent/core/voice/wake_listener.py` (trigger words in `_try_direct_dispatch` or pre-classify)
-- **Recommendation:** Do alongside or before 3B as a quick win
+### 3C — Model Selection Voice Control ✅ COMPLETE (commits 85e022a, 4790a2f)
+- **Result:** `_detect_model_override()` uses two-stage detection:
+  1. Exact prefix match for multi-word phrases ("deep seek", "think hard about", etc.)
+  2. `difflib.get_close_matches()` at 0.72 cutoff catches Whisper garbles (e.g. "ministerial"→"ministral")
+- Routing is per-request only — no persistent state; defaults back after reply
+- Reasoning/ministral overrides get n_ctx=32768 and min 2048 max_tokens
+- Code overrides get n_ctx=16384 and min 1024 max_tokens
+- Deferred features (not yet planned): cancel/stop mid-generation; print `<think>` to terminal in real-time
 
 ---
 
@@ -251,11 +259,11 @@ The base is functionally solid. Latency is the biggest remaining quality-of-life
 - ✅ _take_screenshot() returns screenshot_path on HTTP failure (no longer blocks fast-path)
 - ✅ Manual test passed: describes actual on-screen content (21:07 2026-04-01)
 
-### Phase 3: Latency (IN PROGRESS)
+### Phase 3: Latency (IN PROGRESS — 3B remaining)
 **Goal:** Cut total response time from 20-45s to 10-20s
 **Items:**
 1. ✅ Whisper CUDA — STT 9-12s → ~0.5s (`stt.py` — commit a47b2f2)
-2. Model selection voice control — quick win (`wake_listener.py`)
+2. ✅ Model selection voice control — difflib fuzzy matching, per-request routing, per-capability n_ctx/tokens (`wake_listener.py`, `llama_backend.py` — commits 85e022a, 4790a2f)
 3. Streaming TTS — sentence-chunked synthesis (`model_router.py`, `tts.py`, `wake_listener.py`)
 
 ### Phase 4: Task Robustness
@@ -282,13 +290,15 @@ The base is functionally solid. Latency is the biggest remaining quality-of-life
 - ✅ Vision pipeline end-to-end (FIXED — vision pass 2026-04-01)
 
 ### High (Improve Usability)
-- **Whisper CUDA** — 9-12s STT is painful on every query
+- ✅ **Whisper CUDA** — COMPLETE (9-12s → ~0.5s)
+- ✅ **Model selection voice control** — COMPLETE (per-request routing via fuzzy match)
 - **Streaming TTS** — 8-26s silent wait after reply ready
 
 ### Medium (Quality of Life)
-- Model selection voice control
 - Task deduplication
 - Plugin-level fallback chains
+- Cancel/stop mid-generation (ctrl+space abort)
+- Print `<think>` tokens to terminal in real-time
 
 ### Low (Nice-to-Have)
 - Plugin system
@@ -313,6 +323,11 @@ The base is functionally solid. Latency is the biggest remaining quality-of-life
 
 **Phase 3A (Whisper CUDA): ✅ ACHIEVED**
 - ✅ STT < 1s on every query (Whisper CUDA commit a47b2f2)
+
+**Phase 3C (Model Voice Select): ✅ ACHIEVED**
+- ✅ Voice can route to Ministral 14B or DeepSeek R1 per-request ("use ministral to X", "use deepseek to X")
+- ✅ Whisper garbles caught by difflib fuzzy matching at 0.72 cutoff
+- ✅ Reasoning/ministral models load with 32768 context and minimum 2048 max_tokens
 
 **End of Phase 3 (Latency):**
 - STT < 1s (Whisper CUDA)

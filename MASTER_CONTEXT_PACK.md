@@ -1,9 +1,9 @@
 # Roamin Ambient Agent — Master Context Pack
-# Updated: 2026-04-02 (latency pass + bug fixes complete)
+# Updated: 2026-04-03 (Phase 3C complete, per-capability n_ctx/tokens, log spam fixed)
 # For: new Claude conversations to pick up where we left off
 # Repo: C:\AI\roamin-ambient-agent-tts
 # GitHub: jankeydadondc-byte/roamin-ambient-agent-tts (private)
-# Latest commit: e07adf0
+# Latest commit: 90eec34
 
 ---
 
@@ -95,7 +95,12 @@ Prompt formats (auto-detected from model path):
 - Qwen3/DeepSeek: ChatML (<|im_start|> tokens), with no_think=True injects <think>\n\n</think>
 - Ministral/Mistral: [INST] ... [/INST] format
 
-n_gpu_layers=-1 (full GPU offload), n_ctx=8192
+n_gpu_layers=-1 (full GPU offload)
+Per-capability n_ctx (_CAPABILITY_N_CTX dict in llama_backend.py):
+- default/chat/fast/vision/screen_reading → 8192 (Qwen3-VL-8B — VRAM-constrained by mmproj)
+- reasoning/analysis → 32768 (DeepSeek R1 — loads exclusively, full context available)
+- ministral/ministral_vision/ministral_reasoning → 32768 (Ministral 14B — loads exclusively)
+- code/heavy_code → 16384 (Coder models)
 llama-cpp-python built with VS2019 + CUDA 13.1 + Ninja
 
 ---
@@ -196,6 +201,14 @@ VRAM budget: Qwen3-VL-8B (~5.4GB) + Chatterbox (~3GB) = ~8.4GB — 15.6GB headro
 
 Note: "should i" intentionally REMOVED from LOW triggers (too broad, catches dinner questions)
 AgentLoop._classify_task() uses SEPARATE keywords: reason/analyze → "reasoning" task
+
+Per-capability minimum max_tokens (_CAPABILITY_MIN_TOKENS in wake_listener.py):
+Applied when a voice model override is active — ensures reasoning models have room for <think> chains.
+Overrides the think level floor if it's lower; HIGH think (8192) always wins.
+- reasoning/analysis/ministral_reasoning → 2048
+- ministral/ministral_vision/code → 1024
+- heavy_code → 2048
+- all others (no override key) → 512 floor
 
 ---
 
@@ -304,15 +317,13 @@ VRAM budget (24GB RTX 3090):
 | 1 — Stabilization | ✅ COMPLETE | AgentLoop execution, thread guard, warmup timeout |
 | 1.5 — Resilience | ✅ COMPLETE | Tool timeouts, HTTP retry, dispatch fallback, input validation |
 | 2 — Vision | ✅ COMPLETE | Image bytes pipeline, Qwen3-VL-8B, mmproj, vision fast-path |
-| 3 — Latency | **IN PROGRESS** | 3A (Whisper CUDA) ✅ COMPLETE; 3B (streaming TTS) + 3C (model voice select) remaining |
+| 3 — Latency | **IN PROGRESS** | 3A (Whisper CUDA) ✅ 3C (voice model select) ✅; 3B (streaming TTS) remaining |
 | 4 — Task Robustness | Planned | Deduplication, prioritization |
 | 5 — UX & Plugins | Planned | Plugin system, notifications, RoaminCP |
 | 6 — Security | Planned | API keys, LLM proxy, browser automation |
 
-**Phase 3 is next.** Biggest wins by complexity:
-1. **Whisper CUDA** (MEDIUM) — eliminates 9-12s STT bottleneck on every query
-2. **Model selection voice** (LOW) — unlock Ministral 14B via voice trigger words
-3. **Streaming TTS** (HIGH) — sentence-chunked synthesis, first words spoken much sooner
+**Phase 3 remaining work:**
+- **Streaming TTS (3B)** (HIGH complexity) — sentence-chunked synthesis, first words spoken much sooner
 
 ---
 
@@ -345,6 +356,12 @@ VRAM budget (24GB RTX 3090):
 | dbf4f2f | Auto-launch Chatterbox in VBScript, add IsChatterboxRunning() |
 | 98b39bb | Fix web search hallucination + TeeStream terminal output |
 | e07adf0 | Extend Chatterbox TTS synthesis timeout from 25s to 33s |
+| de821d6 | docs: update context pack and priorities after Phase 3A + bug-fix session |
+| 85e022a | feat: replace model name alias list with difflib fuzzy matching in _detect_model_override |
+| 6130c2d | fix: WMI guard checks python.exe + pythonw.exe; double Chatterbox wait timeout to 120s |
+| bc3615a | fix: remove LM Studio dependency from _start_silent.vbs |
+| 4790a2f | fix: per-capability n_ctx and max_tokens floors for reasoning/code models |
+| 90eec34 | fix: move RUST_LOG=warn before imports to silence primp/ddgs TLS debug spam |
 
 ---
 
@@ -352,20 +369,23 @@ VRAM budget (24GB RTX 3090):
 
 ### Latency (PRIMARY — blocks daily usability)
 1. ✅ **Whisper CUDA** — COMPLETE (commit a47b2f2) — STT now ~0.5-1s on CUDA
+2. ✅ **Model selection voice control (3C)** — COMPLETE (commits 85e022a, 4790a2f)
+   - difflib fuzzy matching replaces 36-entry alias list
+   - "use ministral/deepseek to X" → routes to correct model for that request only
+   - Per-capability n_ctx (32768 for reasoning/ministral) and max_tokens floors (2048) applied
 
-2. **Streaming TTS** — biggest remaining perceived latency win
+3. **Streaming TTS (3B)** — biggest remaining perceived latency win
    - Novel replies take 8-26s of silence before first word
    - Approach: sentence-split reply → synthesize + play sentence 1 while generating rest
    - Files: `model_router.py`, `tts.py`, `wake_listener.py`
 
-3. **Model selection voice control** (3C) — unlock Ministral 14B
-   - "think hard about X" → route to ministral_reasoning capability
-   - Files: `wake_listener.py` (add pre-classify or direct dispatch trigger)
-
 ### Architecture (SECONDARY)
 4. **Task deduplication** — no protection against same query queued twice in AgentLoop
 5. **Feature readiness checks** — pre-flight for vision deps (PIL, mmproj exists)
-6. **primp TLS spam** — still fills ~90% of log; RUST_LOG=warn doesn't catch ddgs connections
+
+### Deferred Features (user-requested, not yet planned)
+6. **Cancel/stop mid-generation** — abort a slow or wrong generation with ctrl+space
+7. **Print thinking to terminal** — stream `<think>` tokens to terminal in real-time (related to 3B)
 
 ---
 
@@ -420,8 +440,9 @@ $content = $content.Replace('old text', 'new text')
 - pyttsx3 COM thread affinity: skips playback when not on main thread (prints log, continues)
 - Chatterbox 500: VRAM contention — rare now that Qwen3-VL-8B only uses 5.4GB vs old 14GB
 - LM Studio plugin: permanently installed, auto-loads, no shortcut needed
-- RUST_LOG=warn suppresses primp TLS spam at process level (set before stdout redirect)
-- TLS debug spam still leaks through for ddgs web_search connections (~90% of log volume)
+- RUST_LOG=warn set at top of run_wake_listener.py BEFORE all imports — Rust extensions (primp)
+  read this env var at initialization time; setting it in main() is too late
+- h2, hpack, httpcore added to Python noisy-logger suppression list (second-layer catch)
 - ddgs (duckduckgo-search renamed package): install both for compatibility
   pip install ddgs duckduckgo-search
 - pre-commit black reformats: causes commit to fail, re-add and try again
@@ -435,5 +456,8 @@ $content = $content.Replace('old text', 'new text')
 - Keyboard 500ms debounce: prevents OS keyboard bounce from firing 3+ parallel wakes (suppress=True + interval=0.5s)
 - TeeStream: stdout/stderr tee to both console (visible terminal) and log file — do NOT replace _TeeStream with a plain redirect or terminal goes blank
 - Chatterbox timeout cap: 33s max — formula is min(15 + len(text)//10, 33); increase if very long replies still truncate
-- VBScript auto-launch: IsChatterboxRunning() checks ports 4123-4129 via MSXML2.XMLHTTP; WaitForChatterbox loops 12×5s (60s max) after launching _start.bat
+- VBScript auto-launch: IsChatterboxRunning() checks ports 4123-4129 via MSXML2.XMLHTTP; WaitForChatterbox loops 24×5s (120s max) after launching _start.bat — doubled from 60s for CUDA cold-start
+- _start_silent.vbs: LM Studio dependency removed — now just 10s boot delay then launches _start.bat
+- IsProcessRunning() WMI: checks BOTH python.exe AND pythonw.exe — Roamin runs as python.exe (visible terminal) so old pythonw.exe-only check was blind to it
+- Per-capability n_ctx: reasoning/ministral load with n_ctx=32768, code with 16384, default with 8192. The n_ctx_seq < n_ctx_train warning for Qwen3-VL-8B is INTENTIONAL (VRAM budget)
 - MCP server stability: NEVER use Windows-MCP PowerShell tool to kill Python processes — it crashes the MCP server. Use Bash tool with: taskkill //F //IM python.exe
