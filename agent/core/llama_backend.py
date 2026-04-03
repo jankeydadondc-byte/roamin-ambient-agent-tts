@@ -97,6 +97,25 @@ CAPABILITY_MAP: dict[str, Path | None] = {
     "ministral_reasoning": MINISTRAL_14B,
 }
 
+# Context window sizes per capability.
+# Qwen3-VL-8B stays at 8192 — vision mmproj consumes extra VRAM so we keep it tight.
+# Reasoning and code models load exclusively (Qwen3-VL-8B unloads first), giving them
+# the VRAM headroom to support their full training context without overflow.
+_CAPABILITY_N_CTX: dict[str, int] = {
+    "default": 8192,
+    "chat": 8192,
+    "fast": 8192,
+    "vision": 8192,
+    "screen_reading": 8192,
+    "reasoning": 32768,
+    "analysis": 32768,
+    "code": 16384,
+    "heavy_code": 16384,
+    "ministral": 32768,
+    "ministral_vision": 32768,
+    "ministral_reasoning": 32768,
+}
+
 
 class LlamaCppBackend:
     """In-process LLM inference backend using llama-cpp-python.
@@ -407,9 +426,11 @@ class ModelRegistry:
 
             # Create and load new backend
             try:
+                n_ctx = _CAPABILITY_N_CTX.get(capability, 8192)
                 backend = LlamaCppBackend(
                     model_path=model_path,
                     n_gpu_layers=-1,  # Full GPU offload for fastest inference
+                    n_ctx=n_ctx,
                     mmproj_path=mmproj_path,
                 )
                 backend.load()

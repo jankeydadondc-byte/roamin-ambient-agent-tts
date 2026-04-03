@@ -133,6 +133,19 @@ _MODEL_VERB_TRIGGERS: frozenset[str] = frozenset({"use", "ask", "with", "hey"})
 # 0.72 catches "ministerl"→"ministral" (≈0.78) while rejecting unrelated words.
 _FUZZY_MODEL_CUTOFF = 0.72
 
+# Minimum max_tokens per capability when a voice model override is active.
+# Reasoning models emit <think> chains (300-500 tokens) before the spoken answer —
+# without a higher floor the chain crowds out the reply and it gets truncated.
+_CAPABILITY_MIN_TOKENS: dict[str, int] = {
+    "reasoning": 2048,
+    "analysis": 2048,
+    "ministral_reasoning": 2048,
+    "ministral": 1024,
+    "ministral_vision": 1024,
+    "code": 1024,
+    "heavy_code": 2048,
+}
+
 
 def _detect_model_override(transcription: str) -> tuple[str | None, str, str | None]:
     """Detect voice model-switching triggers in the transcription.
@@ -641,11 +654,13 @@ class WakeListener:
             ]
             no_think, think_max_tokens = _classify_think_level(transcription)
 
-            # Model override implies the user wants a thoughtful answer —
-            # bump minimum tokens if think level is OFF
-            if model_override and no_think:
-                no_think = False
-                think_max_tokens = max(think_max_tokens, 512)
+            # Model override: apply per-capability minimum token floor.
+            # Reasoning/code models need room for <think> chains + a complete answer.
+            if model_override:
+                capability_min = _CAPABILITY_MIN_TOKENS.get(model_override, 512)
+                if no_think:
+                    no_think = False
+                think_max_tokens = max(think_max_tokens, capability_min)
 
             if tool_context and think_max_tokens < 200:
                 think_max_tokens = 200
