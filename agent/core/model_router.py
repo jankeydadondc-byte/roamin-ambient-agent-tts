@@ -42,6 +42,28 @@ class ModelRouter:
         model = self.select(task)
         return capability in model.get("capabilities", [])
 
+    def best_task_for(self, capability: str) -> str:
+        """Return the task key whose model best satisfies the given capability.
+
+        Scans routing rules in declaration order and returns the first task whose
+        assigned model declares the given capability. Falls back to 'default' if
+        no match is found.
+
+        Use this instead of hardcoding model names — lets model_config.json drive
+        routing decisions so adding a new model requires only a config update.
+
+        Args:
+            capability: Capability string to search for (e.g., "planning", "deep_thinking").
+
+        Returns:
+            Task key string usable with respond(), e.g., "default", "reasoning".
+        """
+        for task, model_id in self._rules.items():
+            model = self._models.get(model_id)
+            if model and capability in model.get("capabilities", []):
+                return task
+        return "default"
+
     def list_models(self) -> list[dict]:
         """Return all configured models."""
         return list(self._models.values())

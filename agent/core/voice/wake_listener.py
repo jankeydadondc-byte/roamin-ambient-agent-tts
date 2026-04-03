@@ -569,12 +569,7 @@ class WakeListener:
             )
             direct_result = None  # treat as no match so AgentLoop branch runs
 
-        # Reasoning/specialist model overrides are conversational — they answer directly,
-        # not via tool-using steps. Bypass AgentLoop for these so DeepSeek/Ministral
-        # isn't asked to produce a JSON step plan (which it won't do correctly).
-        _early_override = _detect_model_override(transcription)[0]
-
-        if direct_result is None and not _early_override:
+        if direct_result is None:
             # Layer 2: AgentLoop — full planner for complex queries
             result = {}
             goal_lower = transcription.lower()

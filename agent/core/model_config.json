@@ -7,7 +7,7 @@
       "model_id": "Qwen3-VL-8B-Instruct-abliterated-v2.Q4_K_M.gguf",
       "endpoint": "local://llama_cpp",
       "size_gb": 4.7,
-      "capabilities": ["fast", "general", "chat", "vision", "screen_reading"],
+      "capabilities": ["fast", "general", "chat", "vision", "screen_reading", "planning", "json_output"],
       "context_window": 8192,
       "always_available": true,
       "notes": "Unified default model: chat + vision + fast. Abliterated (uncensored). Q4_K_M quantization."
@@ -19,7 +19,7 @@
       "model_id": "qwen3:8b",
       "endpoint": "http://127.0.0.1:11434",
       "size_gb": 5.2,
-      "capabilities": ["fast", "general", "chat", "tool_calling"],
+      "capabilities": ["fast", "general", "chat", "tool_calling", "json_output"],
       "context_window": 32768,
       "always_available": true
     },
@@ -30,7 +30,7 @@
       "model_id": "qwen3-coder:30b",
       "endpoint": "http://127.0.0.1:11434",
       "size_gb": 18.0,
-      "capabilities": ["code", "reasoning", "tool_calling"],
+      "capabilities": ["code", "reasoning", "tool_calling", "json_output"],
       "context_window": 32768,
       "always_available": true
     },
@@ -41,7 +41,7 @@
       "model_id": "DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf",
       "endpoint": "http://127.0.0.1:1234",
       "size_gb": 5.0,
-      "capabilities": ["reasoning", "analysis"],
+      "capabilities": ["reasoning", "analysis", "deep_thinking"],
       "context_window": 32768,
       "always_available": false
     },
@@ -52,7 +52,7 @@
       "model_id": "lmstudio-community/Ministral-3-14B-Reasoning-2512-GGUF/Ministral-3-14B-Reasoning-2512-Q4_K_M.gguf",
       "endpoint": "http://127.0.0.1:1234",
       "size_gb": 8.5,
-      "capabilities": ["reasoning"],
+      "capabilities": ["reasoning", "deep_thinking"],
       "context_window": 32768,
       "always_available": false
     },

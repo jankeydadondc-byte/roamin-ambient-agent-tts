@@ -139,7 +139,14 @@ class AgentLoop:
         ]
 
         try:
-            content = self._router.respond(task_type, user_prompt, messages=messages, max_tokens=1000, temperature=0.2)
+            # Use capability-based routing: find whichever model is declared capable
+            # of structured planning (JSON output). This avoids hardcoding "default"
+            # and allows model_config.json to drive the decision — if a better planning
+            # model is added later, just add "planning" to its capabilities.
+            planning_task = self._router.best_task_for("planning")
+            content = self._router.respond(
+                planning_task, user_prompt, messages=messages, max_tokens=1000, temperature=0.2
+            )
 
             # Extract JSON from response
             start = content.find("[")
@@ -174,6 +181,12 @@ class AgentLoop:
             step_result["status"] = "blocked"
             step_result["blocked"] = True
             step_result["reason"] = "High-risk action requires external approval (HITL)"
+            return step_result
+
+        # Null-tool step — pure reasoning or descriptive action, nothing to execute
+        if not tool_name:
+            step_result["status"] = "executed"
+            step_result["outcome"] = ""
             return step_result
 
         # Auto-approve low and medium risk if tool is in registry
