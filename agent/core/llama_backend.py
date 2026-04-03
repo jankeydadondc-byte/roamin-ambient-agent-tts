@@ -455,7 +455,7 @@ class ModelRegistry:
     _instance: ModelRegistry | None = None
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._current: LlamaCppBackend | None = None
         self._current_capability: str | None = None
 
