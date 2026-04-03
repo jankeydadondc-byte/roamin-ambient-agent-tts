@@ -300,6 +300,7 @@ class LlamaCppBackend:
         buffer = ""
 
         assert self._llm is not None
+        print("[Roamin] Inference started (streaming)...", flush=True)
 
         for chunk in self._llm(
             prompt=prompt,
@@ -510,11 +511,23 @@ class ModelRegistry:
 
             # Unload current model if different
             if self._current is not None:
+                print(
+                    f"[Roamin] Switching model: unloading '{self._current_capability}'" f" → loading '{capability}'",
+                    flush=True,
+                )
                 self.unload_all()
+                print("[Roamin] Previous model unloaded, VRAM freed.", flush=True)
 
             # Create and load new backend
             try:
+                import time as _time
+
                 n_ctx = _CAPABILITY_N_CTX.get(capability, 8192)
+                print(
+                    f"[Roamin] Loading '{capability}' model (n_ctx={n_ctx})" f" — this may take 30-90s...",
+                    flush=True,
+                )
+                _t0_load = _time.perf_counter()
                 backend = LlamaCppBackend(
                     model_path=model_path,
                     n_gpu_layers=-1,  # Full GPU offload for fastest inference
@@ -522,6 +535,10 @@ class ModelRegistry:
                     mmproj_path=mmproj_path,
                 )
                 backend.load()
+                print(
+                    f"[Roamin] '{capability}' model ready in {_time.perf_counter() - _t0_load:.1f}s",
+                    flush=True,
+                )
                 self._current = backend
                 self._current_capability = capability
                 return backend
