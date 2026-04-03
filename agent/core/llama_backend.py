@@ -217,6 +217,7 @@ class LlamaCppBackend:
         temperature: float = 0.7,
         stop: list[str] | None = None,
         no_think: bool = False,
+        stream_think: bool = False,
     ) -> str:
         """Generate a chat completion from a message list.
 
@@ -226,6 +227,9 @@ class LlamaCppBackend:
             max_tokens: Maximum tokens to generate.
             temperature: Sampling temperature (0.0 = deterministic, 1.0 = random).
             stop: Optional list of stop sequences.
+            no_think: If True, suppress <think> blocks by pre-filling empty tags.
+            stream_think: If True and no_think is False, stream <think> content
+                          to the terminal in real time as the model generates it.
 
         Returns:
             Assistant reply string stripped of leading/trailing whitespace.
@@ -253,6 +257,11 @@ class LlamaCppBackend:
         # Text-only path: convert message dicts to llama-cpp format
         prompt = self._format_messages_as_prompt(messages, no_think=no_think)
 
+        # Streaming path: print <think> content to terminal in real time
+        if stream_think and not no_think:
+            return self._stream_with_think_print(prompt, max_tokens, temperature, stop or [])
+
+        # Non-streaming path (original)
         response = self._llm(
             prompt=prompt,
             max_tokens=max_tokens,
@@ -266,6 +275,85 @@ class LlamaCppBackend:
 
         reply = response["choices"][0]["text"]
         return reply.strip()
+
+    def _stream_with_think_print(
+        self,
+        prompt: str,
+        max_tokens: int,
+        temperature: float,
+        stop: list[str],
+    ) -> str:
+        """Stream tokens from the model, printing <think> content to terminal in real time.
+
+        Tokens inside <think>...</think> are printed to stdout as they arrive (dimmed cyan).
+        Tokens outside think blocks are accumulated silently.
+        The full raw response (including think tags) is returned for the caller to strip.
+        """
+        OPEN_TAG = "<think>"
+        CLOSE_TAG = "</think>"
+        DIM_CYAN = "\033[2;36m"
+        BOLD_CYAN = "\033[1;36m"
+        RESET = "\033[0m"
+
+        full_text = ""
+        in_think = False
+        buffer = ""
+
+        assert self._llm is not None
+
+        for chunk in self._llm(
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stop=stop,
+            echo=False,
+            stream=True,
+        ):
+            token = chunk["choices"][0]["text"]
+            full_text += token
+            buffer += token
+
+            if not in_think:
+                # --- Looking for <think> opening ---
+                if OPEN_TAG in buffer:
+                    in_think = True
+                    print(f"\n{BOLD_CYAN}[Roamin thinking...]{RESET}", flush=True)
+                    after = buffer.split(OPEN_TAG, 1)[1]
+                    # Edge case: </think> already in same chunk
+                    if CLOSE_TAG in after:
+                        before_close = after.split(CLOSE_TAG, 1)[0]
+                        print(f"{DIM_CYAN}{before_close}{RESET}", end="", flush=True)
+                        print(f"\n{BOLD_CYAN}[Roamin done thinking]{RESET}\n", flush=True)
+                        in_think = False
+                    else:
+                        print(f"{DIM_CYAN}{after}{RESET}", end="", flush=True)
+                    buffer = ""
+                else:
+                    # Keep tail for partial tag detection across chunks
+                    max_tail = len(OPEN_TAG) - 1
+                    if len(buffer) > max_tail:
+                        buffer = buffer[-max_tail:]
+            else:
+                # --- Inside think block, looking for </think> ---
+                if CLOSE_TAG in buffer:
+                    before_close = buffer.split(CLOSE_TAG, 1)[0]
+                    print(f"{DIM_CYAN}{before_close}{RESET}", end="", flush=True)
+                    print(f"\n{BOLD_CYAN}[Roamin done thinking]{RESET}\n", flush=True)
+                    in_think = False
+                    buffer = ""
+                else:
+                    # Print safe portion, keep tail for partial close tag
+                    safe_len = len(buffer) - (len(CLOSE_TAG) - 1)
+                    if safe_len > 0:
+                        print(f"{DIM_CYAN}{buffer[:safe_len]}{RESET}", end="", flush=True)
+                        buffer = buffer[safe_len:]
+
+        # Flush remaining buffer
+        if in_think and buffer:
+            print(f"{DIM_CYAN}{buffer}{RESET}", end="", flush=True)
+            print(f"\n{BOLD_CYAN}[Roamin done thinking]{RESET}\n", flush=True)
+
+        return full_text.strip()
 
     def generate(
         self,
@@ -460,6 +548,7 @@ def get_llm_response(
     temperature: float = 0.7,
     messages: list[dict] | None = None,
     no_think: bool = False,
+    stream_think: bool = False,
 ) -> str:
     """Get LLM response using in-process inference.
 
@@ -469,6 +558,8 @@ def get_llm_response(
         max_tokens: Maximum tokens to generate.
         temperature: Sampling temperature (0.0 = deterministic, 1.0 = random).
         messages: Optional list of message dicts. If provided, uses chat mode.
+        no_think: If True, suppress <think> blocks.
+        stream_think: If True and no_think is False, print <think> tokens to terminal.
 
     Returns:
         LLM response string stripped of whitespace.
@@ -478,8 +569,14 @@ def get_llm_response(
     """
     if messages is not None:
         backend = _REGISTRY.get_backend(capability)
-        return backend.chat(messages, max_tokens=max_tokens, temperature=temperature, no_think=no_think)
+        return backend.chat(
+            messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            no_think=no_think,
+            stream_think=stream_think,
+        )
 
-    # Generation mode
+    # Generation mode (no streaming — think blocks not used in raw prompts)
     backend = _REGISTRY.get_backend(capability)
     return backend.generate(prompt, max_tokens=max_tokens, temperature=temperature)

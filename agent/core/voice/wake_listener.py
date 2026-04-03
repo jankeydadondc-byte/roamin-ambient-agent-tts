@@ -664,7 +664,11 @@ class WakeListener:
 
             if tool_context and think_max_tokens < 200:
                 think_max_tokens = 200
-            print(f"[Roamin] Think level: no_think={no_think}, max_tokens={think_max_tokens}")
+            stream_think = not no_think  # Stream thinking to terminal when think mode is active
+            print(
+                f"[Roamin] Think level: no_think={no_think}, max_tokens={think_max_tokens}"
+                f", stream_think={stream_think}"
+            )
             reply = router.respond(
                 task_type,
                 prompt_text,
@@ -672,6 +676,7 @@ class WakeListener:
                 max_tokens=think_max_tokens,
                 temperature=0.6 if not no_think else 0.7,
                 no_think=no_think,
+                stream_think=stream_think,
             )
             reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
             reply = re.sub(r"[^\x00-\x7F]+", "", reply).strip()

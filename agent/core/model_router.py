@@ -58,6 +58,7 @@ class ModelRouter:
         max_tokens: int = 512,
         temperature: float = 0.7,
         no_think: bool = False,
+        stream_think: bool = False,
     ) -> str:
         """Generate a response for the given task using LlamaCppBackend (primary) or HTTP fallback.
 
@@ -67,6 +68,8 @@ class ModelRouter:
             messages: Optional list of message dicts for chat mode.
             max_tokens: Maximum tokens to generate.
             temperature: Sampling temperature (0.0 = deterministic, 1.0 = random).
+            no_think: If True, suppress <think> blocks.
+            stream_think: If True and no_think is False, print <think> tokens to terminal.
 
         Returns:
             Model response string.
@@ -87,6 +90,7 @@ class ModelRouter:
                     temperature=temperature,
                     messages=messages,
                     no_think=no_think,
+                    stream_think=stream_think,
                 )
             else:
                 logger.debug(
