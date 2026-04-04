@@ -111,11 +111,15 @@ _EXACT_MODEL_TRIGGERS: list[tuple[str, str, str]] = [
     ("reason through ", "reasoning", "DeepSeek R1 8B"),
     ("deeply analyze ", "reasoning", "DeepSeek R1 8B"),
     ("deep dive into ", "reasoning", "DeepSeek R1 8B"),
-    # "deep seek" — Whisper often splits "deepseek" into two words
+    # "deep seek" / "deep-seek" — Whisper splits or hyphenates "deepseek"
     ("use deep seek to ", "reasoning", "DeepSeek R1 8B"),
     ("use deep seek ", "reasoning", "DeepSeek R1 8B"),
+    ("use deep-seek to ", "reasoning", "DeepSeek R1 8B"),
+    ("use deep-seek ", "reasoning", "DeepSeek R1 8B"),
     ("ask deep seek to ", "reasoning", "DeepSeek R1 8B"),
     ("ask deep seek ", "reasoning", "DeepSeek R1 8B"),
+    ("ask deep-seek to ", "reasoning", "DeepSeek R1 8B"),
+    ("ask deep-seek ", "reasoning", "DeepSeek R1 8B"),
     # Coder triggers (no model name spoken) → Qwen3 Coder 80B
     ("use the coder to ", "code", "Qwen3 Coder 80B"),
     ("use the coder ", "code", "Qwen3 Coder 80B"),
@@ -712,6 +716,7 @@ class WakeListener:
             )
             reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
             reply = re.sub(r"[^\x00-\x7F]+", "", reply).strip()
+            reply = re.sub(r"</?[\w]*>?\s*$", "", reply).strip()  # strip trailing partial tags (</s>, </, </think>)
             reply = reply[:200] if reply else ("Got it." if fact_stored else "Done.")
         except Exception:
             reply = "Got it." if fact_stored else "Done."
