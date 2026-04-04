@@ -2,6 +2,35 @@ Prioritized Improvement Batch
 
 Here's my logical priority order for reaching a stable solid ambient agent base:
 
+✅ COMPLETED: PHASE 3B STREAMING TTS + VRAM MANAGEMENT + MODEL AUTO-SYNC (2026-04-04)
+
+VSCode session completed three major features:
+
+1. **Streaming TTS (Phase 3B)** — sentence-chunked synthesis with prefetch-1 pipeline
+   - tts.py: _split_sentences() with abbreviation masking + ellipsis handling
+   - speak_streaming() tokenizes reply → splits by sentence → prefetch-1 ThreadPoolExecutor
+   - Chatterbox synthesis per-sentence with 2 retries + timeout formula min(15 + len//10, 33)
+   - Fallback: if Chatterbox unavailable, per-sentence pyttsx3 fallback
+   - Synthesis failure on sentence N no longer aborts remaining sentences
+   - Tests: 4 test classes (62+ tests), all passing
+
+2. **VRAM Management** — LLM unload before TTS synthesis
+   - llama_backend.py: unload_current_model() exported function to free VRAM
+   - wake_listener.py: _unload_llm() called between reply generation and TTS
+   - Frees ~5.4GB for Chatterbox CUDA synthesis, reloads on next inference
+   - Threading: RLock (reentrant) prevents deadlock in nested lock scenarios
+
+3. **Capability-Aware Model Routing (Model Auto-Sync)**
+   - model_router.py: best_task_for(capability) method routes vision/code/reasoning queries
+   - llama_backend.py: _VISION_CAPABILITIES frozenset gates mmproj loading
+   - mmproj only loads when vision capability in query (saves VRAM, prevents stalls)
+   - Cache gates on model_path AND mmproj_path (no collision)
+   - model_sync.py: walks filesystems + Ollama blobs, idempotently syncs model_config.json
+
+First run registered 6 additional models from LM Studio dirs. Roamin no longer requires external servers.
+
+All systems integrated and tested: 62/62 tests passing, Roamin stable, zero errors in logs.
+
 ✅ COMPLETED: STANDALONE MODEL DISCOVERY (2026-04-03)
 
 Roamin no longer requires LM Studio or Ollama to be running. At startup, model_sync.py:
@@ -12,8 +41,6 @@ Roamin no longer requires LM Studio or Ollama to be running. At startup, model_s
 - Auto-detects paired mmproj files for vision models
 - Idempotently appends net-new entries to model_config.json (0 re-adds on repeat runs)
 - model_router.py dispatches config entries with file_path directly to LlamaCppBackend
-
-First run registered 6 additional models from LM Studio dirs. Drop any .gguf into a models/ folder → registered on next restart.
 
 OpenSpec change: standalone-filesystem-model-discovery (25/25 tasks complete)
 

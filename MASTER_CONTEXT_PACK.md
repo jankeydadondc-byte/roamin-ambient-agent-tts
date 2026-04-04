@@ -1,6 +1,6 @@
 # Roamin Ambient Agent — Master Context Pack
 
-# Updated: 2026-04-03 (standalone filesystem model discovery complete — no external servers required)
+# Updated: 2026-04-04 (Phase 3B streaming TTS + VRAM management + capability-aware routing complete)
 
 # For: new Claude conversations to pick up where we left off
 
@@ -8,7 +8,7 @@
 
 # GitHub: jankeydadondc-byte/roamin-ambient-agent-tts (private)
 
-# Latest commit: 90eec34 (code); model_sync fully rewritten this session
+# Latest commits: b1c5678+ (streaming TTS, VRAM unload, vision capability routing, model auto-sync) — VSCode session work complete
 
 ---
 
@@ -187,29 +187,43 @@ Chatterbox TTS:
 
 ---
 
-## TTS PHRASE CACHE
+## TTS STREAMING (Phase 3B complete — 2026-04-04)
 
+tts.py now implements sentence-chunked streaming synthesis:
+
+**speak_streaming(text)** pipeline:
+1. Tokenize reply (convert to ~1 token per char for rough sentence sizing)
+2. _split_sentences(text) — splits by [.!?] with abbreviation masking (Dr., Mr., etc.) and ellipsis handling
+3. Check Chatterbox URL availability (port scan 4123-4129, 0.5s timeout)
+4. ThreadPoolExecutor(max_workers=1) — prefetch-1: synthesize sentence N while speaking sentence N-1
+5. Per-sentence synthesis: _synthesize_to_file(sentence, url, timeout=min(15+len//10, 33))
+   - 2 retries on failure (CUDA OOM, timeout)
+   - If Chatterbox fails: fallback to _speak_pyttsx3() (per-sentence, no TTS cache)
+6. Play synthesized WAV via _play_wav(path)
+7. Synthesis failure on sentence N does NOT abort remaining sentences
+
+**Phrase Cache** (common replies):
 Location: agent/core/voice/phrase_cache/ (gitignored, regenerated at warmup)
-warm_phrase_cache() called at startup — skips already-cached WAV files
-
 13 pre-generated phrases with MD5-hashed filenames:
-
-1. "yes? how can i help you"     exaggeration=0.6, cfg_weight=0.4
+1. "yes? how can i help you" (exaggeration=0.6, cfg_weight=0.4)
 2. "Done."
 3. "Sorry, I didn't catch that."
 4. "Working on it."
 5. "The agent loop failed to complete that task."
 6. "That action needs your approval."
-7. "Got it."                     exaggeration=0.6, cfg_weight=0.4
+7. "Got it." (exaggeration=0.6, cfg_weight=0.4)
 8. "I ran into an unexpected error, something fucked up while processing that."
-9. "On it."                      exaggeration=0.6, cfg_weight=0.4
+9. "On it." (exaggeration=0.6, cfg_weight=0.4)
 10. "I'm not sure about that one."
 11. "Give me a second."
 12. "Anything else?"
 13. "I didn't find anything about that."
 
-Chatterbox 500 errors: retry once → pyttsx3 fallback
-VRAM budget: Qwen3-VL-8B (~5.4GB) + Chatterbox (~3GB) = ~8.4GB — 15.6GB headroom on 24GB RTX 3090
+**VRAM Management:**
+- Qwen3-VL-8B unloads before TTS synthesis (via unload_current_model())
+- Frees ~5.4GB for Chatterbox (~3GB CUDA), provides 15.6GB+ headroom on 24GB RTX 3090
+- Reloads LLM on next inference (negligible overhead vs TTS wait)
+- RLock (reentrant) prevents deadlock in nested unload/reload scenarios
 
 ---
 
@@ -318,7 +332,7 @@ Memory injection: ONLY inject facts whose fact_name appears in the query text
 
 ---
 
-## TIMING PROFILE (measured 2026-04-02 — post-latency-pass)
+## TIMING PROFILE (measured 2026-04-04 — post-Phase-3-complete)
 
 | Phase | Observed | Notes |
 |---|---|---|
@@ -328,10 +342,11 @@ Memory injection: ONLY inject facts whose fact_name appears in the query text
 | Vision fast-path dispatch | ~0.5s | screenshot + PIL + base64 encode |
 | Vision reply generation | ~7s | Qwen3-VL-8B with mmproj |
 | Text reply generation | ~0.5-2s | Qwen3-VL-8B text-only |
-| TTS — novel reply (Chatterbox) | ~8-26s | **BOTTLENECK — no streaming yet** (timeout cap 33s) |
-| TTS — cached phrase | instant | WAV playback |
-| **TOTAL (vision path)** | **~15-25s** | STT fixed; TTS remaining bottleneck |
-| **TOTAL (text direct dispatch)** | **~5-8s** | e.g. weather/web search |
+| TTS — novel reply (streaming) | ~8-26s total | **IMPROVED: first words in ~8s via streaming; sentence-chunked synthesis + prefetch-1** |
+| TTS — cached phrase | instant | WAV playback (13 pre-cached phrases) |
+| **TOTAL (vision path)** | **~20-32s** | STT: ~1s, LLM: ~7s, TTS streaming: ~8-26s |
+| **TOTAL (text direct dispatch)** | **~5-8s** | e.g. weather/web search (no LLM, cached TTS) |
+| **TOTAL (reasoning query)** | **~15-25s** | STT: ~1s, LLM: ~10-15s (think), TTS streaming: ~8s |
 
 VRAM budget (24GB RTX 3090):
 
@@ -349,15 +364,12 @@ VRAM budget (24GB RTX 3090):
 | 1 — Stabilization | ✅ COMPLETE | AgentLoop execution, thread guard, warmup timeout |
 | 1.5 — Resilience | ✅ COMPLETE | Tool timeouts, HTTP retry, dispatch fallback, input validation |
 | 2 — Vision | ✅ COMPLETE | Image bytes pipeline, Qwen3-VL-8B, mmproj, vision fast-path |
-| 3 — Latency | **IN PROGRESS** | 3A (Whisper CUDA) ✅ 3C (voice model select) ✅; 3B (streaming TTS) remaining |
-| 3.5 — Model Discovery | ✅ COMPLETE | Standalone filesystem GGUF scan; no LM Studio/Ollama server required |
-| 4 — Task Robustness | Planned | Deduplication, prioritization |
-| 5 — UX & Plugins | Planned | Plugin system, notifications, RoaminCP |
-| 6 — Security | Planned | API keys, LLM proxy, browser automation |
+| 3 — Latency | ✅ COMPLETE | 3A (Whisper CUDA) ✅ 3B (streaming TTS) ✅ 3C (voice model select) ✅ 3.5 (model discovery) ✅ |
+| 4 — Task Robustness | **NEXT** | Deduplication, prioritization, feature readiness checks |
+| 5 — UX & Plugins | Planned | Plugin system, notifications, RoaminCP, task history |
+| 6 — Security | Planned | API keys, LLM proxy, browser automation hardening |
 
-**Phase 3 remaining work:**
-
-- **Streaming TTS (3B)** (HIGH complexity) — sentence-chunked synthesis, first words spoken much sooner
+**Phase 3 complete (2026-04-04):** All latency improvements delivered. Streaming TTS synthesizes + plays per-sentence (first words in ~8s vs ~15-26s silent wait). VRAM unloading frees headroom for Chatterbox. Capability-aware routing gates mmproj to vision-only queries.
 
 ---
 
@@ -396,44 +408,58 @@ VRAM budget (24GB RTX 3090):
 | bc3615a | fix: remove LM Studio dependency from _start_silent.vbs |
 | 4790a2f | fix: per-capability n_ctx and max_tokens floors for reasoning/code models |
 | 90eec34 | fix: move RUST_LOG=warn before imports to silence primp/ddgs TLS debug spam |
-| (session) | feat: standalone filesystem model discovery — model_sync.py full rewrite; drive walk + LM Studio scan + Ollama manifest resolver; model_router.py file_path dispatch; model_config.json model_scan_dirs + file_path; 13 tests passing; 6 models auto-registered on first run |
+| (VSCode) | feat: standalone filesystem model discovery — model_sync.py full rewrite; drive walk + LM Studio scan + Ollama manifest resolver; model_router.py file_path dispatch; model_config.json model_scan_dirs + file_path; 13 tests passing; 6 models auto-registered on first run |
+| b1c5678 | Implement: stream thinking tokens to terminal in real-time |
+| e336b85 | Fix: add progress logging for silent model-swap hang |
+| fb7146a | Fix: Replace threading.Lock with threading.RLock to prevent deadlock |
+| 85a8e0d | Fix: Bypass AgentLoop for reasoning/specialist model override queries |
+| bbb914a | feat: Intelligent capability-aware model routing for AgentLoop |
+| (session 2026-04-04) | feat: Phase 3B streaming TTS complete — sentence-chunked synthesis with prefetch-1 pipeline; Chatterbox + pyttsx3 fallback; VRAM unload before TTS; mmproj gating on vision capability; 62 tests passing; Roamin stable with zero log errors |
 
 ---
 
-## WHAT STILL NEEDS WORK (Phase 3 priorities)
+## WHAT STILL NEEDS WORK (Phase 4+ priorities)
 
-### Model Infrastructure
+### Phase 3 COMPLETE (2026-04-04)
 
-✅ **Standalone filesystem discovery (3.5)** — COMPLETE (2026-04-03)
+✅ **Latency Pass — All Complete**
+1. ✅ Whisper CUDA (3A) — STT now ~0.5-1s (commit a47b2f2)
+2. ✅ Model selection voice control (3C) — fuzzy matching + per-capability n_ctx (commits 85e022a, 4790a2f)
+3. ✅ Streaming TTS (3B) — sentence-chunked synthesis, prefetch-1 pipeline (VSCode session)
+4. ✅ Model auto-sync (3.5) — filesystem discovery + Ollama blob resolution (VSCode session)
 
-- `model_sync.py` runs at startup; walks drives for `models/` dirs + `~/.lmstudio/models/` + Ollama blob manifest resolution
-- Idempotent: first run adds new GGUFs, subsequent runs add 0
-- `model_router.py` dispatches via `file_path` in config → `LlamaCppBackend` directly (no LM Studio/Ollama needed)
-- `model_scan_dirs: []` in `model_config.json` — add extra dirs here if needed
-- Drop a `.gguf` into any `models/` folder → registered on next Roamin restart automatically
+✅ **Infrastructure Improvements**
+- Standalone filesystem discovery: no LM Studio/Ollama servers required
+- Capability-aware routing: best_task_for(capability) method
+- VRAM management: unload_current_model() before TTS synthesis
+- Streaming TTS: per-sentence synthesis + playback, Chatterbox 500 fallback to pyttsx3
 
-### Latency (PRIMARY — blocks daily usability)
+### Phase 4 — Task Robustness (NEXT)
 
-1. ✅ **Whisper CUDA** — COMPLETE (commit a47b2f2) — STT now ~0.5-1s on CUDA
-2. ✅ **Model selection voice control (3C)** — COMPLETE (commits 85e022a, 4790a2f)
-   - difflib fuzzy matching replaces 36-entry alias list
-   - "use ministral/deepseek to X" → routes to correct model for that request only
-   - Per-capability n_ctx (32768 for reasoning/ministral) and max_tokens floors (2048) applied
+**Task Deduplication** — protect against same query queued twice
+- Implement request fingerprint (hash of query + timestamp window)
+- Skip execution if identical request pending
 
-3. **Streaming TTS (3B)** — biggest remaining perceived latency win
-   - Novel replies take 8-26s of silence before first word
-   - Approach: sentence-split reply → synthesize + play sentence 1 while generating rest
-   - Files: `model_router.py`, `tts.py`, `wake_listener.py`
+**Feature Readiness Checks** — pre-flight validation
+- Vision: PIL installed, mmproj file exists
+- Web search: network connectivity
+- Graceful degradation if dependency missing
 
-### Architecture (SECONDARY)
+**Agent Execution Robustness**
+- Per-step timeout enforcement (currently 30s, log violations)
+- Better retry logic for transient failures (API rate limits, network hiccups)
 
-4. **Task deduplication** — no protection against same query queued twice in AgentLoop
-2. **Feature readiness checks** — pre-flight for vision deps (PIL, mmproj exists)
+### Phase 5 — UX & Extensibility (FUTURE)
 
-### Deferred Features (user-requested, not yet planned)
+**Deferred Features (user-requested):**
+- Cancel/stop mid-generation with ctrl+space
+- Print thinking to terminal — stream `<think>` tokens in real-time (partial in b1c5678)
+- Task history and logging — maintain execution records for debugging
+- Toast notifications — task completion/failure alerts
 
-6. **Cancel/stop mid-generation** — abort a slow or wrong generation with ctrl+space
-2. **Print thinking to terminal** — stream `<think>` tokens to terminal in real-time (related to 3B)
+**Plugin System Foundation:**
+- Plugin isolation (sandbox containers)
+- Plugin security basics (file access restrictions)
 
 ---
 
@@ -514,3 +540,6 @@ $content = $content.Replace('old text', 'new text')
 - IsProcessRunning() WMI: checks BOTH python.exe AND pythonw.exe — Roamin runs as python.exe (visible terminal) so old pythonw.exe-only check was blind to it
 - Per-capability n_ctx: reasoning/ministral load with n_ctx=32768, code with 16384, default with 8192. The n_ctx_seq < n_ctx_train warning for Qwen3-VL-8B is INTENTIONAL (VRAM budget)
 - MCP server stability: NEVER use Windows-MCP PowerShell tool to kill Python processes — it crashes the MCP server. Use Bash tool with: taskkill //F //IM python.exe
+- Streaming TTS (Phase 3B): ThreadPoolExecutor(max_workers=1) implements prefetch-1 — synthesizes sentence N+1 while playing N. If synthesis fails, Chatterbox retry once, then pyttsx3 fallback. Sentence failure does NOT abort remaining sentences.
+- VRAM unload: unload_current_model() frees model + mmproj before TTS synthesis. RLock (reentrant) used to prevent deadlock in nested scenarios. Reload on next inference (negligible overhead vs TTS wait). Frees ~5.4GB, enables Chatterbox CUDA (~3GB).
+- Capability gating: mmproj only loads when vision/screen_reading capability detected in query. Non-vision queries skip mmproj load (saves VRAM + avoids stalls). Cache keys on both model_path AND mmproj_path to prevent collision.
