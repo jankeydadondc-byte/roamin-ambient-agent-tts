@@ -587,6 +587,13 @@ class WakeListener:
             )
             direct_result = None  # treat as no match so AgentLoop branch runs
 
+        # Think-tier queries bypass AgentLoop — tool execution adds no value for reasoning tasks
+        if direct_result is None:
+            _precheck_no_think, _ = _classify_think_level(transcription)
+            if not _precheck_no_think:
+                print("[Roamin] Think-tier query — bypassing AgentLoop, routing to reasoning LLM", flush=True)
+                direct_result = {}  # sentinel: prevents AgentLoop; tool_context stays ""
+
         if direct_result is None:
             # Layer 2: AgentLoop — full planner for complex queries
             result = {}
