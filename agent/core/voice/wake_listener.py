@@ -701,6 +701,22 @@ class WakeListener:
             if stream_think and task_type not in ("reasoning", "code"):
                 # Default/chat model won't generate <think> tags — route to reasoning model
                 task_type = "reasoning"
+
+            # Think-tier queries get a system prompt that allows detailed responses
+            if not no_think and not tool_context:
+                system_content = (
+                    "You are Roamin, a voice assistant. "
+                    "The user wants a thoughtful, detailed response. "
+                    "Give a thorough answer in natural spoken language. "
+                    "You may use multiple sentences. No markdown, no lists."
+                )
+                if memory_context:
+                    system_content += f"\n\n{memory_context}"
+                messages = [
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": prompt_text},
+                ]
+
             print(
                 f"[Roamin] Think level: no_think={no_think}, max_tokens={think_max_tokens}"
                 f", stream_think={stream_think}, model={task_type}"
@@ -717,7 +733,11 @@ class WakeListener:
             reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
             reply = re.sub(r"[^\x00-\x7F]+", "", reply).strip()
             reply = re.sub(r"</?[\w]*>?\s*$", "", reply).strip()  # strip trailing partial tags (</s>, </, </think>)
-            reply = reply[:200] if reply else ("Got it." if fact_stored else "Done.")
+            # Think-tier: let model finish its full output; OFF-tier: keep voice replies short
+            if no_think:
+                reply = reply[:200] if reply else ("Got it." if fact_stored else "Done.")
+            else:
+                reply = reply if reply else ("Got it." if fact_stored else "Done.")
         except Exception:
             reply = "Got it." if fact_stored else "Done."
         t_reply = time.perf_counter()

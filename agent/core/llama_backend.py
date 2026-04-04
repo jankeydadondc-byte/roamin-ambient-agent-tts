@@ -308,12 +308,18 @@ class LlamaCppBackend:
         BOLD_CYAN = "\033[1;36m"
         RESET = "\033[0m"
 
-        full_text = ""
-        in_think = False
+        # If the prompt already ends with <think>\n, the model will generate
+        # think content immediately — start in think mode and prepend the tag
+        # to full_text so the caller's strip regex can match <think>...</think>.
+        prompt_forced_think = prompt.rstrip().endswith("<think>")
+        full_text = "<think>\n" if prompt_forced_think else ""
+        in_think = prompt_forced_think
         buffer = ""
 
         assert self._llm is not None
         print("[Roamin] Inference started (streaming)...", flush=True)
+        if prompt_forced_think:
+            print(f"\n{BOLD_CYAN}[Roamin thinking...]{RESET}", flush=True)
 
         for chunk in self._llm(
             prompt=prompt,
@@ -435,7 +441,9 @@ class LlamaCppBackend:
             else:
                 formatted_parts.append("<|im_start|>user\n" + content + "<|im_end|>")
         return (
-            "\n".join(formatted_parts) + "\n<|im_start|>assistant\n" + ("<think>\n\n</think>\n\n" if no_think else "")
+            "\n".join(formatted_parts)
+            + "\n<|im_start|>assistant\n"
+            + ("<think>\n\n</think>\n\n" if no_think else "<think>\n")
         )
 
     def _format_mistral(self, messages: list[dict]) -> str:
