@@ -63,6 +63,13 @@ class AgentLoop:
         # Determine task type and select model
         task_type = self._classify_task(goal)
 
+        # Pre-flight: verify required dependencies are present before proceeding
+        ready, readiness_msg = self._check_feature_ready(task_type)
+        if not ready:
+            result["status"] = "failed"
+            result["error"] = readiness_msg
+            return result
+
         # Gather screen context if requested
         screen_obs = None
         if include_screen:
@@ -80,6 +87,9 @@ class AgentLoop:
             result["status"] = "failed"
             result["error"] = "Could not generate plan (model unreachable or returned invalid response)"
             return result
+
+        # Sort steps by priority before execution: HIGH first, LOW last (stable sort)
+        plan = sorted(plan, key=self._priority_score)
 
         # Execute each step — check for cancellation between steps
         for step in plan:
@@ -121,6 +131,52 @@ class AgentLoop:
         if any(w in goal_lower for w in ["reason", "analyze", "analyse"]):
             return "reasoning"
         return "default"
+
+    @staticmethod
+    def _check_feature_ready(capability: str) -> tuple[bool, str]:
+        """Pre-flight check for a named capability.
+
+        Returns:
+            (ready: bool, message: str)
+            If ready=False, message is a TTS-safe English sentence explaining the failure.
+        """
+        if capability == "vision":
+            try:
+                import importlib
+
+                importlib.import_module("PIL")
+            except ImportError:
+                return False, "Vision is unavailable: Pillow is not installed."
+            try:
+                from agent.core.llama_backend import QWEN3_VL_8B_MMPROJ
+
+                if QWEN3_VL_8B_MMPROJ is None:
+                    return False, "Vision is unavailable: the multimodal projection file is missing."
+            except ImportError:
+                return False, "Vision is unavailable: llama-cpp-python backend not found."
+        return True, ""
+
+    @staticmethod
+    def _priority_score(step: dict) -> int:
+        """Priority sort key for a plan step. Lower score = execute first.
+
+        HIGH (0): user-visible output actions (notify, screenshot, open URL, clipboard write)
+        MED  (1): data retrieval and reads (web search, memory search, file reads) — default
+        LOW  (2): background writes and storage (memory write, file write, move, delete)
+        """
+        tool = (step.get("tool") or "").lower()
+        action = (step.get("action") or "").lower()
+        _HIGH_TOOLS = frozenset({"notify", "take_screenshot", "open_url", "clipboard_write"})
+        _LOW_TOOLS = frozenset({"memory_write", "write_file", "move_file", "delete_file"})
+        if tool in _HIGH_TOOLS:
+            return 0
+        if tool in _LOW_TOOLS:
+            return 2
+        if any(w in action for w in ("notif", "alert", "show", "display", "open")):
+            return 0
+        if any(w in action for w in ("store", "save", "log", "record", "write")):
+            return 2
+        return 1
 
     def _generate_plan(self, goal: str, context: str, task_type: str) -> list[dict] | None:
         """Call the model and parse a list of steps from its response."""

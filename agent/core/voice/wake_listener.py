@@ -31,6 +31,18 @@ except ImportError:
         pass
 
 
+def _make_request_fingerprint(transcription: str) -> str:
+    """Return a SHA-256 hex digest of the normalised transcription.
+
+    Whitespace is collapsed so minor STT variation ('search  dogs' vs 'search dogs')
+    maps to the same fingerprint.
+    """
+    import hashlib
+
+    normalised = " ".join(transcription.lower().split())
+    return hashlib.sha256(normalised.encode("utf-8")).hexdigest()
+
+
 def _classify_think_level(text: str) -> tuple[bool, int]:
     """Classify how much thinking Roamin should do for this prompt.
 
@@ -345,6 +357,11 @@ class WakeListener:
         self._last_wake_time = 0  # Track last wake trigger time (seconds)
         self._wake_debounce_interval = 0.5  # Ignore triggers within 500ms
         self._agent_running_event = threading.Event()  # Set while AgentLoop.run() is executing
+        # Request deduplication — suppress identical transcriptions within the TTL window
+        self._pending_fingerprint: str | None = None
+        self._pending_fingerprint_lock = threading.Lock()
+        self._fingerprint_ttl = 2.0  # seconds; set to 0.0 in tests to disable
+        self._last_fingerprint_time: float = 0.0
 
         if keyboard is None:
             print("[Warning] WakeListener not available (keyboard import failed)")
@@ -416,6 +433,9 @@ class WakeListener:
                 sys.stdout.flush()
                 sys.stderr.flush()
             finally:
+                # Clear dedup fingerprint so same query can run again after this wake completes
+                with self._pending_fingerprint_lock:
+                    self._pending_fingerprint = None
                 self._wake_lock.release()
 
         thread = threading.Thread(target=_guarded_wake, daemon=False)
@@ -503,6 +523,18 @@ class WakeListener:
             if tts.is_available():
                 tts.speak("Sorry, I didn't catch that.")
             return
+
+        # Deduplication: suppress identical transcriptions within TTL window
+        _fp = _make_request_fingerprint(transcription)
+        _now_fp = time.perf_counter()
+        with self._pending_fingerprint_lock:
+            if self._pending_fingerprint == _fp and (_now_fp - self._last_fingerprint_time) < self._fingerprint_ttl:
+                print(f"[Roamin] Duplicate request suppressed (fp={_fp[:8]})", flush=True)
+                if tts.is_available():
+                    tts.speak_streaming("Already on it.")
+                return
+            self._pending_fingerprint = _fp
+            self._last_fingerprint_time = _now_fp
 
         # Memory — extract facts and build context before AgentLoop
         memory = MemoryManager()

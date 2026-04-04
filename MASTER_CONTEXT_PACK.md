@@ -427,43 +427,394 @@ VRAM budget (24GB RTX 3090):
 
 ---
 
-## WHAT STILL NEEDS WORK (Phase 4+ priorities)
+## COMPREHENSIVE ROADMAP & FUTURE PRIORITIES
 
-### Phase 3 COMPLETE (2026-04-04)
+### Completed Work Summary
 
-✅ **Phase 3 — Latency + Quality — All Complete**
-1. ✅ Whisper CUDA (3A) — STT now ~0.5-1s (commit a47b2f2)
-2. ✅ Model selection voice control (3C) — fuzzy matching + per-capability n_ctx (commits 85e022a, 4790a2f)
-3. ✅ Streaming TTS (3B) — sentence-chunked synthesis, prefetch-1 pipeline, VRAM unload
-4. ✅ Model auto-sync (3.5) — filesystem discovery + Ollama blob resolution
-5. ✅ Think streaming (3D) — DeepSeek R1 think chain visible in terminal (cyan ANSI)
-6. ✅ Think-tier reply quality — full-length output, thorough system prompt, forced `<think>` tag
-7. ✅ AgentLoop bypass — think queries skip tool execution entirely (prevents hang-freeze)
+#### Phase 3 (2026-04-04) — Latency + Quality ✅ COMPLETE
 
-### Phase 4 — Task Robustness (NEXT)
+All Phase 3 items delivered:
+1. ✅ **Whisper CUDA (3A)** — STT now ~0.5-1s (commit a47b2f2)
+2. ✅ **Model selection voice control (3C)** — fuzzy matching + per-capability n_ctx/tokens (commits 85e022a, 4790a2f)
+3. ✅ **Streaming TTS (3B)** — sentence-chunked synthesis, prefetch-1 pipeline, VRAM unload before synthesis, pyttsx3 fallback, 62 tests passing
+4. ✅ **Model auto-sync (3.5)** — filesystem discovery + LM Studio/Ollama blob resolution; runs standalone, no external servers
+5. ✅ **Think streaming (3D)** — DeepSeek R1 think chain visible in terminal (cyan ANSI), real-time streaming
+6. ✅ **Think-tier reply quality** — full-length output (no 200-char truncation), thorough system prompt, forced `<think>` tag
+7. ✅ **AgentLoop bypass** — think queries skip tool execution entirely (prevents hang-freeze, instant execution)
 
-**Task Deduplication** — protect against same query queued twice
-- Implement request fingerprint (hash of query + timestamp window)
-- Skip execution if identical request pending
+---
 
-**Feature Readiness Checks** — pre-flight validation
-- Vision: PIL installed, mmproj file exists
+### Priority 1: CORE STABILITY & ERROR RESILIENCE ✅ MOSTLY COMPLETE
+
+**Status:** All critical items fixed; 1 minor gap remains
+
+**Completed (2026-03-31 to 2026-04-02):**
+- ✅ AgentLoop execution wired to registry.execute()
+- ✅ Thread guard on wake presses (non-blocking lock)
+- ✅ Double-launch race condition fixed (VBS lock file PID check)
+- ✅ Tool timeouts 30s per step via ThreadPoolExecutor
+- ✅ HTTP retry with exponential backoff (Timeout/ConnectionError, 2x attempts, 1s/2s)
+- ✅ Direct dispatch fallback to AgentLoop on failure (resilience pass)
+- ✅ Structured error categories: validation/timeout/unavailable/permission/error
+- ✅ Input validation on security-critical tools (URL scheme, control char strip, size limits)
+- ✅ Graceful task termination with threading.Event checks
+- ✅ Per-step timeout + AgentLoop.cancel() method
+
+**Remaining Gap (LOW priority):**
+- Plugin-level fallback chains: if tool A fails, try tool B
+  - Currently: direct dispatch → AgentLoop fallback exists
+  - Missing: tool-to-tool fallback WITHIN AgentLoop
+  - Impact: non-critical for daily use
+
+---
+
+### Priority 2: VISION CAPABILITY COMPLETION ✅ COMPLETE (2026-04-01)
+
+**Status:** Full end-to-end image pipeline working
+
+**Verified Working:**
+- ✅ Screen observation fires via 10 regex patterns (direct dispatch)
+- ✅ Screenshot saved to workspace/screenshots/ as PNG
+- ✅ take_screenshot() returns screenshot_path even if HTTP vision API fails
+- ✅ Vision fast-path loads image, PIL-resizes to 1024x1024, base64-encodes
+- ✅ Multimodal message with image_url sent to Qwen3-VL-8B
+- ✅ LlamaCppBackend detects list content → create_chat_completion()
+- ✅ Qwen25VLChatHandler invokes mmproj vision encoder
+- ✅ Model describes actual on-screen content (not generic "can't see" responses)
+- ✅ Manual test passed (2026-04-01 21:07)
+
+**Remaining (deferred, non-blocking):**
+- Feature readiness checks: pre-flight validation for vision deps (PIL, mmproj)
+- Capability-based access control: enable/disable vision per configuration
+- Both deferrable since core vision is fully functional
+
+---
+
+### Priority 3: LATENCY REDUCTION ✅ COMPLETE (2026-04-04)
+
+**Status:** All 3 components delivered; total response time optimized
+
+**Completed** (sub-items are implementation details of parent features):
+- ✅ **Whisper CUDA**: STT ~0.5-1s (was 9-12s CPU FP32)
+  - CUDA acceleration enabled in stt.py
+  - Commit: a47b2f2
+- ✅ **Streaming TTS**: Sentence-chunked synthesis with prefetch-1 pipeline
+  - First sentence spoken in ~8s (was 15-26s silent wait for full synthesis)
+  - Subsequent sentences synthesized while current plays
+  - Abbreviation masking (Mr., Dr.) + ellipsis handling
+  - 2 retries per sentence, timeout formula min(15 + len//10, 33)
+  - Fallback to pyttsx3 if Chatterbox unavailable
+  - 62 tests passing
+- ✅ **VRAM management**: Unload LLM (~5.4GB) before TTS synthesis
+  - Frees VRAM for Chatterbox CUDA (~3GB)
+  - Reloads on next inference (negligible overhead)
+  - RLock prevents deadlock in nested scenarios
+  - Implemented in llama_backend.py, wake_listener.py
+- ✅ **Model capability routing**: mmproj only loads for vision queries (saves VRAM)
+  - Cache gates on model_path AND mmproj_path
+  - Non-vision queries skip mmproj load (saves VRAM)
+- ✅ **Think token streaming**: DeepSeek R1 reasoning visible in real-time (cyan terminal output)
+  - Streaming to terminal enabled commit b1c5678
+  - Real-time cyan ANSI progress visible
+- ✅ **Per-capability n_ctx**: reasoning/ministral load with 32768; code with 16384; default with 8192
+  - _CAPABILITY_N_CTX dict in llama_backend.py
+  - Prevents context overflow on long think chains
+
+**Result:**
+| Path | Time |
+|---|---|
+| Text direct dispatch | ~5-8s |
+| Vision path | ~20-32s |
+| Think/reasoning | ~20-40s |
+
+---
+
+### Priority 4: TASK EXECUTION ROBUSTNESS (NEXT)
+
+**Why now:** Stability + latency complete. Handle edge cases in task queuing/execution.
+
+**Planned enhancements:**
+
+#### 4.1 Task Deduplication
+- Prevent redundant execution if same intent queued multiple times rapidly
+- Thread guard already blocks concurrent wake presses; AgentLoop has no dedup
+- Implementation: request fingerprint (hash of transcription + timestamp window)
+- Skip execution if identical request pending/executing
+- **Files:** agent/core/agent_loop.py
+- **Complexity:** LOW
+
+#### 4.2 Dynamic Task Prioritization
+- Priority-based queue system (high/medium/low)
+- Assign based on urgency keywords or user input
+- Weighted round-robin or priority heap scheduler
+- **Files:** agent/core/agent_loop.py
+- **Complexity:** MEDIUM
+
+#### 4.3 Feature Readiness Checks
+- Pre-flight validation for feature dependencies
+- Vision: PIL installed, mmproj file exists, model loaded
 - Graceful degradation if dependency missing
+- **Files:** agent/core/agent_loop.py, agent/core/llama_backend.py
+- **Complexity:** LOW
 
-**Agent Execution Robustness**
-- Better retry logic for transient failures
-- Plugin-level fallback chains (tool-to-tool fallback within AgentLoop)
+#### 4.4 Plugin-Level Fallback Chains
+- If plugin A fails, automatically try plugin B
+- Currently: direct dispatch → AgentLoop fallback only
+- Missing: tool-to-tool fallback within AgentLoop
+- **Files:** agent/core/agent_loop.py, agent/core/tool_registry.py
+- **Complexity:** MEDIUM
 
-### Phase 5 — UX & Extensibility (FUTURE)
+---
 
-**Deferred Features (user-requested):**
-- Cancel/stop mid-generation with ctrl+space
-- Task history and logging — maintain execution records for debugging
-- Toast notifications — task completion/failure alerts
+### Priority 5: PLUGIN SYSTEM FOUNDATION
 
-**Plugin System Foundation:**
-- Plugin isolation (sandbox containers)
-- Plugin security basics (file access restrictions)
+**Why fifth:** Enables future extensibility without breaking stability.
+
+**Planned enhancements:**
+
+#### 5.1 Plugin Isolation and Sandboxing
+- Run plugins in isolated environments (virtual threads with restricted access)
+- Prevents one bad plugin from crashing whole agent
+- Use Python's importlib or containerization (Docker) for stricter isolation
+- **Files:** agent/core/plugin_loader.py (new)
+- **Complexity:** MEDIUM-HIGH
+
+#### 5.2 Plugin Lifecycle Management
+- Dynamic plugin loading/unloading
+- Plugin version compatibility checks
+- Plugin dependency resolution
+- **Files:** agent/core/plugin_loader.py
+- **Complexity:** MEDIUM
+
+#### 5.3 Plugin Discovery and Auto-Reloading
+- Auto-detect new/updated plugins without restart
+- HTTP-based plugin list provider (like N.E.K.O)
+- **Files:** agent/core/plugin_loader.py
+- **Complexity:** MEDIUM
+
+#### 5.4 Plugin Configuration Persistence
+- Store plugin configs (API keys, settings) persistently
+- Allow dynamic modification
+- **Files:** agent/core/plugin_loader.py, agent/config/
+- **Complexity:** LOW
+
+#### 5.5 Plugin Security Basics
+- Restrict file operations in plugins to specific directories
+- Prevent access to sensitive system files/data
+- **Files:** agent/core/tool_registry.py, agent/core/plugin_loader.py
+- **Complexity:** LOW
+
+---
+
+### Priority 6: USER EXPERIENCE ENHANCEMENTS
+
+**Why sixth:** After stability + core features work, improve user feedback.
+
+**Planned enhancements:**
+
+#### 6.1 Real-Time Task Progress Updates
+- Forward progress updates for long-running tasks
+- Current web search gives no indication it's working
+- Implement progress callback to speech synthesis or terminal
+- **Files:** agent/core/agent_loop.py, agent/core/voice/wake_listener.py
+- **Complexity:** LOW
+
+#### 6.2 Notification System
+- Toast notifications for task completion/failures/important events
+- Currently rely solely on TTS replies (limited feedback)
+- Implement system tray notifications or desktop alerts
+- **Files:** agent/core/voice/tts.py (new notification layer)
+- **Complexity:** LOW
+
+#### 6.3 Task History and Logging
+- Maintain history of executed tasks with timestamps, parameters, results
+- Critical for debugging complex workflows
+- Query history by date/status/keyword
+- **Files:** agent/core/memory/memory_manager.py, new history table
+- **Complexity:** MEDIUM
+
+#### 6.4 RoaminCP UI Integration
+- Current state: RoaminCP UI exists (Tauri + React, Monaco editor, xterm terminal, diff viewer)
+  - Location: C:\AI\os_agent\ui\roamin-control
+  - Not yet connected to ambient agent
+  - Control API still points at os_agent repo, not new repo
+- Solution: Wire RoaminCP to this repo's Control API, add websocket event streaming
+- Show task execution, memory recall, tool outputs in real-time
+- **Files:** agent/core/api.py (new), wiring to RoaminCP
+- **Complexity:** MEDIUM-HIGH
+
+#### 6.5 Cancel/Stop Mid-Generation
+- ctrl+space again during thinking/generation to abort
+- Currently disabled (would be confused with wake key)
+- Implement timeout-based detection: if ctrl+space within 2s of first press, treat as abort signal
+- **Files:** agent/core/agent_loop.py, agent/core/voice/wake_listener.py
+- **Complexity:** MEDIUM
+
+---
+
+### Priority 7: SECURITY & INTEGRATION HARDENING
+
+**Why seventh:** Once everything else works well, harden for production.
+
+**Planned enhancements:**
+
+#### 7.1 API Key Management
+- Secure management of credentials via environment variables/secrets manager
+- Currently avoid hardcoded values but no central system
+- Use Python's keyring or .env with encryption
+- **Files:** agent/core/config.py
+- **Complexity:** LOW
+
+#### 7.2 LLM Proxy Layer
+- Normalize responses from different LLM providers (OpenAI, Gemini, Ollama, llama.cpp)
+- Handle API differences, rate limits, token counting
+- Current model routing is internal, not provider-agnostic
+- **Files:** agent/core/model_router.py (refactor)
+- **Complexity:** MEDIUM
+
+#### 7.3 Browser Automation
+- Integrate Selenium/Playwright for web interactions
+- Currently only have web_search, no browser control
+- Enable "click on X", "fill form Y", "scroll page" commands
+- **Files:** agent/core/tools.py (new browser tools)
+- **Complexity:** MEDIUM-HIGH
+
+#### 7.4 Input Validation & Injection Prevention
+- Already done for most tools (URL scheme, control chars, size limits)
+- Audit remaining tools for SQL injection, command injection, XSS
+- **Files:** agent/core/tools.py (audit + hardening)
+- **Complexity:** MEDIUM
+
+---
+
+### Priority 8: PERFORMANCE & SCALABILITY (FUTURE)
+
+**Why eighth:** Once all else stable, optimize for resource efficiency.
+
+**Planned enhancements:**
+
+#### 8.1 Asynchronous Task Execution
+- Leverage Python's asyncio for I/O-bound operations
+- Currently blocking calls can freeze agent during web searches or large file reads
+- Non-blocking task execution for parallel operations
+- **Files:** agent/core/agent_loop.py (refactor to asyncio)
+- **Complexity:** MEDIUM-HIGH
+
+#### 8.2 Resource Monitoring & Throttling
+- Monitor CPU/memory/GPU usage
+- Implement throttling for high-frequency tasks (API calls, polling)
+- Auto-pause agent if resource exhaustion detected
+- **Files:** agent/core/resource_monitor.py (new)
+- **Complexity:** MEDIUM
+
+#### 8.3 Background Task Cleanup
+- Automatically clean up completed/timed-out tasks to avoid memory leaks
+- Implement task registry cleanup similar to N.E.K.O
+- **Files:** agent/core/agent_loop.py
+- **Complexity:** LOW
+
+#### 8.4 TurboQuant KV Cache (optional)
+- Optimize LLM inference with KV cache quantization
+- Reduces memory footprint for long conversations
+- Low priority, only if VRAM becomes constraint
+- **Files:** agent/core/llama_backend.py
+- **Complexity:** LOW
+
+---
+
+### Priority 9: TESTING & DEBUGGING
+
+**Status:** Basic test infrastructure in place; comprehensive coverage needed
+
+**Planned enhancements:**
+
+#### 9.1 Unit & Integration Tests
+- Add comprehensive unit tests for core components
+- Test task execution, plugin handling, memory recall
+- Use pytest + unittest.mock for mocking
+- **Files:** tests/ (new directory)
+- **Complexity:** MEDIUM
+
+#### 9.2 Structured Logging
+- Enhance logging with JSON format for easier debugging
+- Implement _throttled_logger to avoid log spam
+- Include request ID for tracing calls through system
+- **Files:** agent/core/logging_config.py (new)
+- **Complexity:** LOW
+
+#### 9.3 Error Recovery Testing
+- Test retry logic for transient failures
+- Verify exponential backoff works correctly
+- **Files:** tests/
+- **Complexity:** LOW
+
+---
+
+### Priority 10: DOCUMENTATION & ONBOARDING
+
+**Status:** Context pack + commit messages adequate; user-facing docs missing
+
+**Planned enhancements:**
+
+#### 10.1 Interactive Documentation
+- Web-based UI guide for voice commands
+- Tooltip overlays for unfamiliar features
+- Video demonstrations of key workflows
+- **Files:** docs/ (new)
+- **Complexity:** MEDIUM
+
+#### 10.2 Plugin Development Guides
+- Templates and examples for custom plugins
+- Best practices for performance, security, reliability
+- API documentation for tool registry
+- **Files:** docs/PLUGIN_DEVELOPMENT.md (new)
+- **Complexity:** LOW
+
+#### 10.3 Troubleshooting Guides
+- Common issues and solutions
+- Debug strategies for agent hangs, crashes, errors
+- **Files:** docs/TROUBLESHOOTING.md (new)
+- **Complexity:** LOW
+
+---
+
+### Implementation Strategy
+
+For each priority batch:
+
+1. **Read relevant source files** in correct repo paths (agent/core/*)
+2. **Create minimal surgical edits** — don't rewrite entire files
+3. **Validate Python files:**
+   - `py_compile -m py_compile file.py`
+   - `flake8 --max-line-length=120 file.py`
+4. **Run simple test queries** to verify behavior
+5. **Check logs** for new errors or regressions
+6. **Commit atomically** with clear message
+7. **Update this roadmap** when phase complete
+
+---
+
+### Execution Timeline
+
+- **Phase 4 (Task Robustness):** ~2-3 days (dedup, priority queue, feature checks)
+- **Phase 5 (Plugins):** ~1 week (isolation, lifecycle, security)
+- **Phase 6 (UX):** ~3-4 days (progress, notifications, history)
+- **Phase 7 (Security):** ~2-3 days (API keys, input validation, hardening)
+- **Phase 8+ (Performance/Testing):** ~ongoing as needed
+
+---
+
+### Architecture Decision Points
+
+| Decision | Current Status | Notes |
+|---|---|---|
+| Local-first vs cloud | ✅ Local-first | No API keys, no internet except web_search |
+| Model backend | ✅ llama.cpp | Fast, flexible, full GPU offload |
+| Memory system | ✅ SQLite + ChromaDB | Efficient, semantic search working |
+| Task execution | ✅ AgentLoop + registry | Supports both tools + direct dispatch |
+| Voice I/O | ✅ Whisper + Chatterbox | High quality, local models, ~1s STT + 8-26s TTS |
+| Startup chain | ✅ VBScript + PowerShell | Windows-native, no external deps |
+| Extensibility | 🔄 Plugin system (Phase 5) | Tool registry exists, isolation/sandboxing TBD |
 
 ---
 

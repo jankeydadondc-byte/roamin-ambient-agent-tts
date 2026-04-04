@@ -2,9 +2,24 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 from agent.core.tools import TOOL_IMPLEMENTATIONS
+
+logger = logging.getLogger(__name__)
+
+# Fallback chains: if the primary tool fails, try each entry in order.
+# Each entry is (fallback_tool_name, param_adapter | None).
+# param_adapter: callable(original_params) -> adapted_params, or None to pass params unchanged.
+_TOOL_FALLBACKS: dict[str, list[tuple[str, object]]] = {
+    "web_search": [
+        ("fetch_url", lambda p: {"url": "https://duckduckgo.com/?q=" + str(p.get("query", ""))}),
+    ],
+    "memory_recall": [
+        ("memory_search", lambda p: {"query": p.get("fact_name", "")}),
+    ],
+}
 
 
 class ToolRegistry:
@@ -203,8 +218,8 @@ class ToolRegistry:
         """Return names of tools that can be auto-approved."""
         return [t["name"] for t in self._tools.values() if t.get("risk") == "low"]
 
-    def execute(self, name: str, params: dict) -> dict:
-        """Execute a tool by name with the given params."""
+    def _execute_single(self, name: str, params: dict) -> dict:
+        """Execute one tool with no fallback logic. Identical to the old execute() behaviour."""
         tool = self.get(name)
         if tool is None:
             return {"success": False, "error": f"Unknown tool: {name}"}
@@ -215,6 +230,23 @@ class ToolRegistry:
             return impl(params)
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def execute(self, name: str, params: dict) -> dict:
+        """Execute a tool by name. On failure, try configured fallback chain if any."""
+        result = self._execute_single(name, params)
+        if result.get("success"):
+            return result
+
+        for fallback_name, adapter in _TOOL_FALLBACKS.get(name, []):
+            adapted_params = adapter(params) if adapter is not None else params  # type: ignore[operator]
+            fb_result = self._execute_single(fallback_name, adapted_params)
+            if fb_result.get("success"):
+                logger.info("Tool '%s' failed; fallback '%s' succeeded", name, fallback_name)
+                fb_result["fallback_used"] = fallback_name
+                return fb_result
+            logger.debug("Fallback '%s' also failed: %s", fallback_name, fb_result.get("error"))
+
+        return result  # all fallbacks exhausted — return original failure
 
     def format_for_prompt(self) -> str:
         """Format tool list for inclusion in a model prompt."""
