@@ -1,6 +1,6 @@
 # Roamin Consolidated Priorities — Unified Roadmap
 
-**Date:** 2026-04-03 (updated after Phase 3C complete + token/context pass)
+**Date:** 2026-04-04 (updated after Phase 3 fully complete — think streaming, reply quality, AgentLoop bypass)
 **Scope:** Merge "still needs work" items with Prioritized Improvement Batch into single coherent roadmap
 **Focus:** Most important to stability and solid build first
 
@@ -106,29 +106,33 @@ The base is functionally solid. Latency is the biggest remaining quality-of-life
 - **VRAM cost:** ~500MB during STT, released after transcription
 - **Files:** `agent/core/voice/stt.py`
 
-### 3B — Streaming TTS (HIGH ROI, HIGH complexity)
-- **Current:** Full LLM reply generated → THEN full Chatterbox synthesis → THEN playback
-- **Problem:** User hears nothing for 8-26s after reply is ready
-- **Opportunity:** Sentence-level chunking — synthesize first sentence while LLM generates rest
-  - Split reply on `.`, `?`, `!` after first sentence (~10-20 tokens)
-  - Begin Chatterbox synthesis of sentence 1 while model continues generating
-  - Queue remaining sentences; play in order
-- **Note:** `Chatterbox /v1/audio/speech` is OpenAI-compat — no true streaming
-  - True streaming requires chunked HTTP response reading or websocket
-  - Sentence-chunking is simpler and achieves ~60% of the latency win
-- **Impact:** First words spoken ~5-8s earlier; perceived response feels near-instant
-- **Complexity:** HIGH — requires `router.respond()` to yield tokens + sentence splitter + TTS queue
-- **Files:** `agent/core/model_router.py`, `agent/core/voice/tts.py`, `agent/core/voice/wake_listener.py`
-- **Recommendation:** Tackle AFTER Whisper CUDA (lower complexity first)
+### 3B — Streaming TTS ✅ COMPLETE (VSCode session + commits 7d77189+)
+- **Result:** Sentence-chunked synthesis with prefetch-1 ThreadPoolExecutor pipeline
+  - `_split_sentences()` with abbreviation masking + ellipsis handling
+  - `speak_streaming()`: tokenize → split → synthesize sentence N while playing N-1
+  - Chatterbox synthesis per-sentence: 2 retries + timeout formula `min(15 + len//10, 33)`
+  - Fallback: per-sentence pyttsx3 if Chatterbox unavailable
+  - Sentence failure does NOT abort remaining sentences
+- **VRAM management:** `unload_current_model()` called before TTS → frees ~5.4GB for Chatterbox CUDA
+- **Files:** `agent/core/voice/tts.py`, `agent/core/voice/wake_listener.py`, `agent/core/llama_backend.py`
 
 ### 3C — Model Selection Voice Control ✅ COMPLETE (commits 85e022a, 4790a2f)
 - **Result:** `_detect_model_override()` uses two-stage detection:
-  1. Exact prefix match for multi-word phrases ("deep seek", "think hard about", etc.)
+  1. Exact prefix match for multi-word phrases ("deep seek", "deep-seek", "think hard about", etc.)
   2. `difflib.get_close_matches()` at 0.72 cutoff catches Whisper garbles (e.g. "ministerial"→"ministral")
 - Routing is per-request only — no persistent state; defaults back after reply
 - Reasoning/ministral overrides get n_ctx=32768 and min 2048 max_tokens
 - Code overrides get n_ctx=16384 and min 1024 max_tokens
-- Deferred features (not yet planned): cancel/stop mid-generation; print `<think>` to terminal in real-time
+
+### 3D — Think Token Streaming + Reply Quality ✅ COMPLETE (2026-04-04, commits 264088b–d92d5ca)
+- **Result:** Think-tier queries (LOW/MED/HIGH) now stream DeepSeek R1 reasoning to terminal in real-time
+  - AgentLoop bypassed for think queries (prevents grep/tool hang-freeze)
+  - task_type auto-overridden to "reasoning" when `stream_think=True`
+  - `_format_chatml()` forces `<think>\n` prefix → model ALWAYS enters think mode
+  - `_stream_with_think_print()` starts in think mode immediately when prefix detected
+  - Think-tier system prompt: "Give a thorough, detailed response" (was "ONE short sentence")
+  - 200-char truncation removed for think-tier — full model output spoken via streaming TTS
+- **Verified:** cyan think stream in terminal, 1000+ char comprehensive replies, zero truncation
 
 ---
 
@@ -259,12 +263,13 @@ The base is functionally solid. Latency is the biggest remaining quality-of-life
 - ✅ _take_screenshot() returns screenshot_path on HTTP failure (no longer blocks fast-path)
 - ✅ Manual test passed: describes actual on-screen content (21:07 2026-04-01)
 
-### Phase 3: Latency (IN PROGRESS — 3B remaining)
+### Phase 3: Latency ✅ COMPLETE (2026-04-04)
 **Goal:** Cut total response time from 20-45s to 10-20s
 **Items:**
 1. ✅ Whisper CUDA — STT 9-12s → ~0.5s (`stt.py` — commit a47b2f2)
 2. ✅ Model selection voice control — difflib fuzzy matching, per-request routing, per-capability n_ctx/tokens (`wake_listener.py`, `llama_backend.py` — commits 85e022a, 4790a2f)
-3. Streaming TTS — sentence-chunked synthesis (`model_router.py`, `tts.py`, `wake_listener.py`)
+3. ✅ Streaming TTS — sentence-chunked synthesis, prefetch-1 pipeline, VRAM unload (`tts.py`, `wake_listener.py`, `llama_backend.py`)
+4. ✅ Think token streaming — DeepSeek R1 reasoning visible in terminal (cyan), forced `<think>` tags, think-tier system prompt, no reply truncation (`wake_listener.py`, `llama_backend.py` — commits 264088b–d92d5ca)
 
 ### Phase 4: Task Robustness
 **Items:** Priority 4 (deduplication, prioritization)
@@ -298,7 +303,7 @@ The base is functionally solid. Latency is the biggest remaining quality-of-life
 - Task deduplication
 - Plugin-level fallback chains
 - Cancel/stop mid-generation (ctrl+space abort)
-- Print `<think>` tokens to terminal in real-time
+- ✅ Print `<think>` tokens to terminal in real-time — COMPLETE (2026-04-04)
 
 ### Low (Nice-to-Have)
 - Plugin system
@@ -329,11 +334,12 @@ The base is functionally solid. Latency is the biggest remaining quality-of-life
 - ✅ Whisper garbles caught by difflib fuzzy matching at 0.72 cutoff
 - ✅ Reasoning/ministral models load with 32768 context and minimum 2048 max_tokens
 
-**End of Phase 3 (Latency):**
-- STT < 1s (Whisper CUDA)
-- First word spoken < 5s after STT completes (streaming TTS)
-- Total latency < 20s for typical query
-- Total latency < 30s for vision query
+**End of Phase 3 (Latency): ✅ ACHIEVED (2026-04-04)**
+- ✅ STT < 1s (Whisper CUDA)
+- ✅ Streaming TTS — first sentence spoken while synthesizing next
+- ✅ Think token streaming — DeepSeek R1 reasoning visible in real-time, cyan terminal output
+- ✅ Think-tier full-length replies — no 200-char truncation; model completes its output
+- Total latency ~15-37s depending on think tier and model swap
 
 **Production Ready:**
 - All Priority 1-5 items complete

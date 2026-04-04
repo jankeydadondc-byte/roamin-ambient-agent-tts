@@ -2,6 +2,26 @@ Prioritized Improvement Batch
 
 Here's my logical priority order for reaching a stable solid ambient agent base:
 
+✅ COMPLETED: THINK TOKEN STREAMING + REPLY QUALITY (2026-04-04)
+
+Session fixed think-tier queries end-to-end:
+
+1. **AgentLoop bypass for think queries** — Think-tier queries (LOW/MED/HIGH) now bypass AgentLoop entirely. Previously, queries like "think really hard about X" would enter AgentLoop, attempt grep/web_search tools that timeout, and hang Roamin for 30s+. Now a precheck runs `_classify_think_level()` before AgentLoop, and if active, routes straight to LLM.
+
+2. **Think routing to DeepSeek R1** — Default model (Qwen3-VL-8B) never generates `<think>` tags. When `stream_think=True`, task_type is automatically overridden to `"reasoning"` (DeepSeek R1 8B) which reliably produces `<think>...</think>` chains.
+
+3. **Force `<think>` prefix in ChatML prompt** — `_format_chatml()` now appends `<think>\n` when `no_think=False`, guaranteeing the model enters think mode. `_stream_with_think_print()` detects the prefilled tag and starts streaming immediately — no silent inference.
+
+4. **Think-tier system prompt** — Previously all queries got "Reply in ONE short sentence." Think-tier queries now get "Give a thorough, detailed response. You may use multiple sentences." This allows comprehensive answers without forcing brevity.
+
+5. **Removed 200-char truncation for think replies** — `reply[:200]` only applies to OFF-tier (no_think=True) queries. Think-tier gets full model output, spoken sentence-by-sentence via streaming TTS.
+
+6. **Hyphenated "deep-seek" model override** — Whisper sometimes transcribes "deepseek" as "deep-seek". Added 4 hyphenated variants to `_EXACT_PREFIXES` so model override correctly strips the phrase and routes cleanly.
+
+7. **Trailing partial tag strip** — Added `re.sub(r"</?[\w]*>?\s*$", "", reply)` to strip `</s>`, `</`, or other partial closing tags that survive the 200-char truncation edge.
+
+**Verified working:** "think really hard about color theory" → cyan think stream → 1000+ char comprehensive reply, fully spoken, zero truncation. 62/62 tests passing.
+
 ✅ COMPLETED: PHASE 3B STREAMING TTS + VRAM MANAGEMENT + MODEL AUTO-SYNC (2026-04-04)
 
 VSCode session completed three major features:

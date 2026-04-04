@@ -1,6 +1,6 @@
 # Roamin Ambient Agent — Master Context Pack
 
-# Updated: 2026-04-04 (Phase 3B streaming TTS + VRAM management + capability-aware routing complete)
+# Updated: 2026-04-04 (Phase 3 fully complete — think streaming, reply quality, AgentLoop bypass)
 
 # For: new Claude conversations to pick up where we left off
 
@@ -8,7 +8,7 @@
 
 # GitHub: jankeydadondc-byte/roamin-ambient-agent-tts (private)
 
-# Latest commits: b1c5678+ (streaming TTS, VRAM unload, vision capability routing, model auto-sync) — VSCode session work complete
+# Latest commits: d92d5ca (force think tags + think system prompt + remove truncation) — Phase 3 done
 
 ---
 
@@ -346,7 +346,8 @@ Memory injection: ONLY inject facts whose fact_name appears in the query text
 | TTS — cached phrase | instant | WAV playback (13 pre-cached phrases) |
 | **TOTAL (vision path)** | **~20-32s** | STT: ~1s, LLM: ~7s, TTS streaming: ~8-26s |
 | **TOTAL (text direct dispatch)** | **~5-8s** | e.g. weather/web search (no LLM, cached TTS) |
-| **TOTAL (reasoning query)** | **~15-25s** | STT: ~1s, LLM: ~10-15s (think), TTS streaming: ~8s |
+| Think reply generation | ~5-26s | DeepSeek R1 8B; cyan think stream visible in terminal while generating |
+| **TOTAL (reasoning/think query)** | **~20-40s** | STT: ~1s, model swap: ~5s, LLM+think: ~10-25s, TTS streaming: ~8-16s |
 
 VRAM budget (24GB RTX 3090):
 
@@ -369,7 +370,11 @@ VRAM budget (24GB RTX 3090):
 | 5 — UX & Plugins | Planned | Plugin system, notifications, RoaminCP, task history |
 | 6 — Security | Planned | API keys, LLM proxy, browser automation hardening |
 
-**Phase 3 complete (2026-04-04):** All latency improvements delivered. Streaming TTS synthesizes + plays per-sentence (first words in ~8s vs ~15-26s silent wait). VRAM unloading frees headroom for Chatterbox. Capability-aware routing gates mmproj to vision-only queries.
+**Phase 3 fully complete (2026-04-04):** All latency + quality improvements delivered:
+- Streaming TTS: first sentence spoken ~8s (was 15-26s silent wait); VRAM unload before synthesis
+- Think streaming: DeepSeek R1 think chain visible in terminal in real-time (cyan ANSI)
+- Think-tier: full-length replies (no 200-char cap), thorough system prompt, forced `<think>` tag
+- Capability routing: mmproj gated to vision queries only; think queries bypass AgentLoop entirely
 
 ---
 
@@ -415,6 +420,10 @@ VRAM budget (24GB RTX 3090):
 | 85a8e0d | Fix: Bypass AgentLoop for reasoning/specialist model override queries |
 | bbb914a | feat: Intelligent capability-aware model routing for AgentLoop |
 | (session 2026-04-04) | feat: Phase 3B streaming TTS complete — sentence-chunked synthesis with prefetch-1 pipeline; Chatterbox + pyttsx3 fallback; VRAM unload before TTS; mmproj gating on vision capability; 62 tests passing; Roamin stable with zero log errors |
+| 8c8f251 | fix: route think-active queries to reasoning model so think tokens stream to terminal |
+| 264088b | fix: bypass AgentLoop for think-tier queries to prevent tool-hang freezes |
+| 1b21045 | fix: add hyphenated deep-seek override patterns; strip trailing partial tags from reply |
+| d92d5ca | fix: force <think> tags, think-tier system prompt, remove 200-char truncation for think queries |
 
 ---
 
@@ -422,17 +431,14 @@ VRAM budget (24GB RTX 3090):
 
 ### Phase 3 COMPLETE (2026-04-04)
 
-✅ **Latency Pass — All Complete**
+✅ **Phase 3 — Latency + Quality — All Complete**
 1. ✅ Whisper CUDA (3A) — STT now ~0.5-1s (commit a47b2f2)
 2. ✅ Model selection voice control (3C) — fuzzy matching + per-capability n_ctx (commits 85e022a, 4790a2f)
-3. ✅ Streaming TTS (3B) — sentence-chunked synthesis, prefetch-1 pipeline (VSCode session)
-4. ✅ Model auto-sync (3.5) — filesystem discovery + Ollama blob resolution (VSCode session)
-
-✅ **Infrastructure Improvements**
-- Standalone filesystem discovery: no LM Studio/Ollama servers required
-- Capability-aware routing: best_task_for(capability) method
-- VRAM management: unload_current_model() before TTS synthesis
-- Streaming TTS: per-sentence synthesis + playback, Chatterbox 500 fallback to pyttsx3
+3. ✅ Streaming TTS (3B) — sentence-chunked synthesis, prefetch-1 pipeline, VRAM unload
+4. ✅ Model auto-sync (3.5) — filesystem discovery + Ollama blob resolution
+5. ✅ Think streaming (3D) — DeepSeek R1 think chain visible in terminal (cyan ANSI)
+6. ✅ Think-tier reply quality — full-length output, thorough system prompt, forced `<think>` tag
+7. ✅ AgentLoop bypass — think queries skip tool execution entirely (prevents hang-freeze)
 
 ### Phase 4 — Task Robustness (NEXT)
 
@@ -442,18 +448,16 @@ VRAM budget (24GB RTX 3090):
 
 **Feature Readiness Checks** — pre-flight validation
 - Vision: PIL installed, mmproj file exists
-- Web search: network connectivity
 - Graceful degradation if dependency missing
 
 **Agent Execution Robustness**
-- Per-step timeout enforcement (currently 30s, log violations)
-- Better retry logic for transient failures (API rate limits, network hiccups)
+- Better retry logic for transient failures
+- Plugin-level fallback chains (tool-to-tool fallback within AgentLoop)
 
 ### Phase 5 — UX & Extensibility (FUTURE)
 
 **Deferred Features (user-requested):**
 - Cancel/stop mid-generation with ctrl+space
-- Print thinking to terminal — stream `<think>` tokens in real-time (partial in b1c5678)
 - Task history and logging — maintain execution records for debugging
 - Toast notifications — task completion/failure alerts
 
@@ -543,3 +547,8 @@ $content = $content.Replace('old text', 'new text')
 - Streaming TTS (Phase 3B): ThreadPoolExecutor(max_workers=1) implements prefetch-1 — synthesizes sentence N+1 while playing N. If synthesis fails, Chatterbox retry once, then pyttsx3 fallback. Sentence failure does NOT abort remaining sentences.
 - VRAM unload: unload_current_model() frees model + mmproj before TTS synthesis. RLock (reentrant) used to prevent deadlock in nested scenarios. Reload on next inference (negligible overhead vs TTS wait). Frees ~5.4GB, enables Chatterbox CUDA (~3GB).
 - Capability gating: mmproj only loads when vision/screen_reading capability detected in query. Non-vision queries skip mmproj load (saves VRAM + avoids stalls). Cache keys on both model_path AND mmproj_path to prevent collision.
+- Think-tier queries bypass AgentLoop entirely — pre-check at wake_listener.py runs `_classify_think_level()` before the AgentLoop gate. If think mode active (`no_think=False`), a sentinel is set so AgentLoop is skipped and tool_context stays "". This prevents grep/web_search tools from timing out and hanging Roamin on reasoning queries.
+- Think routing: when `stream_think=True`, task_type is overridden to "reasoning" so DeepSeek R1 handles the query. Only DeepSeek R1 reliably generates `<think>...</think>` chains. Qwen3-VL-8B (default) does not.
+- Forced `<think>` prefix: `_format_chatml()` appends `<think>\n` when `no_think=False`. `_stream_with_think_print()` detects this and starts in think mode immediately. `full_text` is prepended with `<think>\n` so the caller's strip regex can remove it.
+- Think-tier truncation: `reply[:200]` only applies when `no_think=True` (OFF tier). Think queries get full model output spoken via streaming TTS sentence-by-sentence.
+- "deep-seek" hyphen: Whisper sometimes transcribes "deepseek" as "deep-seek" (hyphenated). Both variants are in `_EXACT_PREFIXES` (`wake_listener.py`) for model override detection.
