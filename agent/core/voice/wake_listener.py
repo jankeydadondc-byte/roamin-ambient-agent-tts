@@ -687,9 +687,12 @@ class WakeListener:
             if tool_context and think_max_tokens < 200:
                 think_max_tokens = 200
             stream_think = not no_think  # Stream thinking to terminal when think mode is active
+            if stream_think and task_type not in ("reasoning", "code"):
+                # Default/chat model won't generate <think> tags — route to reasoning model
+                task_type = "reasoning"
             print(
                 f"[Roamin] Think level: no_think={no_think}, max_tokens={think_max_tokens}"
-                f", stream_think={stream_think}"
+                f", stream_think={stream_think}, model={task_type}"
             )
             reply = router.respond(
                 task_type,
