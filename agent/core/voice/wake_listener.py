@@ -23,6 +23,13 @@ from agent.core.tool_registry import ToolRegistry
 from agent.core.voice.stt import SpeechToText
 from agent.core.voice.tts import TextToSpeech
 
+try:
+    from agent.core.llama_backend import unload_current_model as _unload_llm
+except ImportError:
+
+    def _unload_llm() -> None:  # type: ignore[misc]
+        pass
+
 
 def _classify_think_level(text: str) -> tuple[bool, int]:
     """Classify how much thinking Roamin should do for this prompt.
@@ -333,6 +340,7 @@ class WakeListener:
         self._wake_lock = threading.Lock()
         self._last_wake_time = 0  # Track last wake trigger time (seconds)
         self._wake_debounce_interval = 0.5  # Ignore triggers within 500ms
+        self._agent_running_event = threading.Event()  # Set while AgentLoop.run() is executing
 
         if keyboard is None:
             print("[Warning] WakeListener not available (keyboard import failed)")
@@ -382,7 +390,17 @@ class WakeListener:
         self._last_wake_time = now
 
         if not self._wake_lock.acquire(blocking=False):
-            print("[Roamin] Wake already in progress, ignoring")
+            if self._agent_running_event.is_set() and self._agent_loop is not None:
+                self._agent_loop.cancel()
+                _tts = self._tts
+                if _tts is not None:
+                    threading.Thread(
+                        target=lambda: _tts.speak("Got it, stopping."),
+                        daemon=True,
+                    ).start()
+                print("[Roamin] Cancelled active agent loop via hotkey")
+            else:
+                print("[Roamin] Wake already in progress, ignoring")
             return
 
         def _guarded_wake():
@@ -575,7 +593,11 @@ class WakeListener:
             goal_lower = transcription.lower()
             include_screen = any(w in goal_lower for w in ["screen", "look at", "looking at", "what am i", "what's on"])
             try:
-                result = agent_loop.run(transcription, include_screen=include_screen)
+                self._agent_running_event.set()
+                try:
+                    result = agent_loop.run(transcription, include_screen=include_screen)
+                finally:
+                    self._agent_running_event.clear()
             except Exception as e:
                 print(f"[Warning] AgentLoop error: {e}")
                 if tts.is_available():
@@ -686,9 +708,12 @@ class WakeListener:
         t_reply = time.perf_counter()
         print(f"[Roamin] t={t_reply - t0:.3f}s  Reply generated (+{t_reply - t_stt:.3f}s) → '{reply}'")
 
-        # TTS — speak reply
+        # Unload LLM before TTS — frees VRAM so Chatterbox can synthesize without contention
+        _unload_llm()
+
+        # TTS — speak reply (streaming pipeline for multi-sentence LLM replies)
         if tts.is_available():
-            tts.speak(reply)
+            tts.speak_streaming(reply)
         t_spoken = time.perf_counter()
         print(f"[Roamin] t={t_spoken - t0:.3f}s  Reply spoken (+{t_spoken - t_reply:.3f}s)")
         print(f"[Roamin] TOTAL: {t_spoken - t0:.3f}s")

@@ -71,7 +71,19 @@ QWEN3_CODER_NEXT = Path(
 )
 QWEN3_CODER_NEXT = QWEN3_CODER_NEXT if QWEN3_CODER_NEXT.exists() else None
 
-# --- mmproj lookup: maps model paths to their multimodal projection files ---
+# Capabilities that require the multimodal projection (mmproj) to be loaded.
+# Text-only capabilities (default, chat, fast) intentionally excluded — loading mmproj
+# adds ~350MB VRAM overhead and is wasted for pure text inference.
+_VISION_CAPABILITIES: frozenset[str] = frozenset(
+    {
+        "vision",
+        "screen_reading",
+        "ministral_vision",
+    }
+)
+
+# mmproj lookup: maps model paths to their multimodal projection files.
+# Only consulted when the capability is in _VISION_CAPABILITIES.
 _MMPROJ_MAP: dict[Path | None, Path | None] = {
     QWEN3_VL_8B: QWEN3_VL_8B_MMPROJ,
     QWEN35_9B: QWEN35_9B_MMPROJ,
@@ -98,13 +110,14 @@ CAPABILITY_MAP: dict[str, Path | None] = {
 }
 
 # Context window sizes per capability.
-# Qwen3-VL-8B stays at 8192 — vision mmproj consumes extra VRAM so we keep it tight.
+# Text tasks (default/chat/fast): 16384 — mmproj NOT loaded so the VRAM headroom is available.
+# Vision/screen_reading: 8192 — mmproj IS loaded (~350MB extra), keeping total VRAM bounded.
 # Reasoning and code models load exclusively (Qwen3-VL-8B unloads first), giving them
 # the VRAM headroom to support their full training context without overflow.
 _CAPABILITY_N_CTX: dict[str, int] = {
-    "default": 8192,
-    "chat": 8192,
-    "fast": 8192,
+    "default": 16384,
+    "chat": 16384,
+    "fast": 16384,
     "vision": 8192,
     "screen_reading": 8192,
     "reasoning": 32768,
@@ -498,8 +511,12 @@ class ModelRegistry:
                     "Please download the GGUF model and ensure the path is correct."
                 )
 
-            # Determine required multimodal projection (if any)
-            mmproj_path: Path | None = _MMPROJ_MAP.get(model_path)
+            # Determine required multimodal projection (if any).
+            # Only load mmproj for capabilities that actually process images.
+            if capability in _VISION_CAPABILITIES:
+                mmproj_path: Path | None = _MMPROJ_MAP.get(model_path)
+            else:
+                mmproj_path = None
 
             # If same model already loaded, return it
             if (
@@ -556,6 +573,14 @@ class ModelRegistry:
 
 # Module-level singleton instance
 _REGISTRY = ModelRegistry()
+
+
+def unload_current_model() -> None:
+    """Unload the currently active LLM, freeing VRAM for other processes (e.g. Chatterbox TTS).
+
+    Safe to call at any time — no-op if no model is loaded.
+    """
+    _REGISTRY.unload_all()
 
 
 def get_llm_response(

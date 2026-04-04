@@ -1,5 +1,7 @@
 # Roamin Ambient Agent — Claude Code Context Pack
+
 # Generated: 2026-03-29
+
 # For: claude-code sessions on C:\AI\roamin-ambient-agent-tts
 
 ---
@@ -20,6 +22,7 @@ Python: 3.12, venv at C:\AI\roamin-ambient-agent-tts\.venv
 ## WHAT ROAMIN IS
 
 An ambient AI agent that lives in the background on Windows.
+
 - Wake hotkey: ctrl+space
 - Speaks back using a cloned voice (Shawn James via Chatterbox TTS)
 - Remembers facts across sessions (SQLite + ChromaDB)
@@ -85,6 +88,7 @@ ChromaDB: agent/core/memory/chroma_db/ (gitignored)
 Tables: conversation_history, named_facts, actions_taken, observations, user_patterns
 
 Fact extraction: regex patterns in wake_listener._extract_and_store_fact()
+
 - Triggers: "remember my X is Y", "my X is Y", "save/note that my X is Y"
 - Writes to named_facts table
 
@@ -92,6 +96,7 @@ Memory injection: only injects facts whose fact_name appears in the query text
 (prevents irrelevant facts like favorite_color appearing in dinner suggestions)
 
 Known facts currently stored:
+
 - favorite color: blue
 
 ---
@@ -108,6 +113,7 @@ _classify_think_level(text) in wake_listener.py:
 | HIGH | False | 8192 | "max thinking/effort", "think really hard", "don't/dont fuck/mess this up", "give it everything", "full effort" |
 
 AgentLoop._classify_task() separately routes to model capabilities:
+
 - vision: screen/look/see/observe/what am i
 - code: code/program/script/function/debug/fix
 - reasoning: reason/analyze/analyse
@@ -121,6 +127,7 @@ AgentLoop._classify_task() separately routes to model capabilities:
 Generated at warmup via warm_phrase_cache() — skips existing files on subsequent boots
 
 Phrases:
+
 1. "yes? how can i help you"      ← wake acknowledgment (exaggeration=0.6, cfg_weight=0.4)
 2. "Done."
 3. "Sorry, I didn't catch that."
@@ -162,6 +169,7 @@ Layer reduction testing (31, 28 layers) showed no net gain — total stays same.
 ## CURRENT GAPS / NEXT PRIORITIES
 
 ### Immediate (next session)
+
 1. Tool execution — AgentLoop plans steps but nothing executes yet
    - ToolRegistry exists but has no registered tools
    - First tools: open_app, web_search, file_read, screen_capture
@@ -169,17 +177,19 @@ Layer reduction testing (31, 28 layers) showed no net gain — total stays same.
    - "what am i looking at?" should capture screen and describe it
 
 ### Near term
+
 3. Streaming TTS — pipe model output sentence-by-sentence to Chatterbox
    - Biggest latency win: first word plays while rest generates
    - Requires rewriting router.respond() to yield tokens
-4. Double-launch fix — two pythonw instances still start on VBS fire
+2. Double-launch fix — two pythonw instances still start on VBS fire
    - Lock file guard works for subsequent launches, not the initial race
 
 ### Architecture gaps
+
 5. RoaminCP UI — Tauri control panel in C:\AI\os_agent\ui\roamin-control
    - Has Monaco editor, xterm terminal, diff viewer
    - Not yet connected to ambient agent
-6. Control API migration — ui/control_api/ not in new repo
+2. Control API migration — ui/control_api/ not in new repo
    - Startup shortcut still points at os_agent
 
 ---
@@ -204,7 +214,7 @@ C:\AI\roamin-ambient-agent-tts\
 │       ├── screen_observer.py    # PIL screenshot + vision model
 │       ├── tool_registry.py      # Tool plugin system (empty)
 │       └── context_builder.py   # Builds context for AgentLoop
-├── _start_wake_listener.vbs      # Windows startup launcher (XMLHTTP, no PS flash)
+├──_start_wake_listener.vbs      # Windows startup launcher (XMLHTTP, no PS flash)
 ├── logs/
 │   ├── wake_listener.log         # All stdout/stderr from pythonw
 │   └── startup.log               # VBS startup events
@@ -227,26 +237,33 @@ C:\AI\roamin-ambient-agent-tts\
 ## SHELL PATTERNS THAT WORK ON THIS MACHINE
 
 # Activate venv
+
 .venv\Scripts\Activate.ps1
 
 # Python compile check
+
 .venv\Scripts\python.exe -m py_compile path\to\file.py
 
 # Flake8
+
 .venv\Scripts\python.exe -m flake8 path\to\file.py --max-line-length=120
 
 # Git commit (pre-commit runs automatically)
+
 git add file.py
 git commit -m "message"
 git push origin main
 
 # nvidia-smi VRAM check
+
 nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader
 
 # Kill wake listener instances
+
 Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -like "*run_wake_listener*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
 # Restart wake listener
+
 Remove-Item "C:\AI\roamin-ambient-agent-tts\logs\_wake_listener.lock" -Force -ErrorAction SilentlyContinue
 Start-Process wscript.exe -ArgumentList '"C:\AI\roamin-ambient-agent-tts\_start_wake_listener.vbs"' -WindowStyle Hidden
 

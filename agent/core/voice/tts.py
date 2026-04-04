@@ -12,7 +12,9 @@ To use voice cloning:
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
+import re
 import tempfile
 from pathlib import Path
 
@@ -62,6 +64,47 @@ PHRASE_PARAMS: dict[str, dict] = {
 def _phrase_cache_key(text: str) -> str:
     """Generate a safe filename key for a cached phrase."""
     return hashlib.md5(text.encode()).hexdigest() + ".wav"
+
+
+# Common abbreviations that should NOT be treated as sentence boundaries.
+_ABBREV_RE = re.compile(
+    r"\b(Mr|Mrs|Dr|Prof|Sr|Jr|vs|etc|e\.g|i\.e|approx|est|dept|govt|Corp|Inc|Ltd)\.\s",
+    re.IGNORECASE,
+)
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split text into sentence chunks suitable for streaming TTS.
+
+    Retains the terminal punctuation with each chunk. Skips segments
+    shorter than 4 non-whitespace characters. Handles abbreviations
+    and ellipsis runs.
+    """
+    # Collapse ellipsis runs to a single sentinel so they don't create empty splits
+    text = re.sub(r"\.{2,}", "\u2026", text)  # replace ... with …
+
+    # Temporarily mask abbreviation periods so the boundary splitter ignores them
+    masked = _ABBREV_RE.sub(lambda m: m.group(0).replace(".", "\x00"), text)
+
+    parts: list[str] = []
+    last = 0
+    for m in re.finditer(r"(?<=[.?!])(?=\s|$)", masked):
+        end = m.end()
+        # Find the end of the whitespace
+        ws_end = end
+        while ws_end < len(masked) and masked[ws_end] == " ":
+            ws_end += 1
+        chunk = masked[last:end].strip().replace("\x00", ".").replace("\u2026", "...")
+        if len(chunk.replace(" ", "")) >= 4:
+            parts.append(chunk)
+        last = ws_end
+
+    # Remainder (last sentence may have no terminal punctuation)
+    remainder = masked[last:].strip().replace("\x00", ".").replace("\u2026", "...")
+    if len(remainder.replace(" ", "")) >= 4:
+        parts.append(remainder)
+
+    return parts if parts else [text]
 
 
 def _find_chatterbox_url() -> str | None:
@@ -185,7 +228,7 @@ class TextToSpeech:
         else:
             self._speak_pyttsx3(text)
 
-    def _speak_chatterbox(self, text: str) -> None:
+    def _speak_chatterbox(self, text: str, dest_path: Path | None = None) -> None:
         """Send text to Chatterbox API and play the returned audio."""
         if _requests is None:
             self._speak_pyttsx3(text)
@@ -195,15 +238,74 @@ class TextToSpeech:
             self._speak_pyttsx3(text)
             return
         try:
-            out = _TMP_DIR / "chatterbox_out.wav"
+            out = dest_path if dest_path is not None else _TMP_DIR / "chatterbox_out.wav"
             if _synthesize_to_file(text, url, out):
                 self._play_wav(out)
+                if dest_path is not None:
+                    try:
+                        out.unlink(missing_ok=True)
+                    except OSError:
+                        pass
             else:
                 print("[TTS] Chatterbox synthesis failed — falling back to SAPI")
                 self._speak_pyttsx3(text)
         except Exception as e:
             print(f"[TTS] Chatterbox error: {e} — falling back to SAPI")
             self._speak_pyttsx3(text)
+
+    def speak_streaming(self, text: str) -> None:
+        """Speak text with a sentence-chunked pipeline.
+
+        Splits reply into sentences and pipelines synthesis with playback:
+        sentence N+1 is synthesized in a background thread while sentence N
+        is playing, reducing perceived latency to the first-sentence synthesis time.
+
+        Falls back to sequential pyttsx3/SAPI if Chatterbox is unavailable.
+        """
+        text = self._apply_pronunciation(text)
+        sentences = _split_sentences(text)
+
+        url = _find_chatterbox_url()
+        if url is None:
+            # Fallback path — sequential pyttsx3
+            for sentence in sentences:
+                self._speak_pyttsx3(sentence)
+            return
+
+        def _synth(sentence: str, idx: int) -> Path | None:
+            """Synthesize one sentence to a numbered temp file. Returns path or None."""
+            dest = _TMP_DIR / f"chatterbox_streaming_{idx}.wav"
+            if _synthesize_to_file(sentence, url, dest):
+                return dest
+            return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            # Pre-synthesize the first sentence before entering the loop
+            future = executor.submit(_synth, sentences[0], 0)
+
+            for i, sentence in enumerate(sentences):
+                # Submit synthesis of the NEXT sentence while we wait/play the current one
+                next_future: concurrent.futures.Future | None = None
+                if i + 1 < len(sentences):
+                    next_future = executor.submit(_synth, sentences[i + 1], i + 1)
+
+                # Resolve synthesis of current sentence
+                try:
+                    wav_path = future.result()
+                except Exception as e:
+                    print(f"[TTS] Streaming synthesis failed for sentence {i}: {e} — SAPI fallback")
+                    wav_path = None
+
+                if wav_path is not None:
+                    self._play_wav(wav_path)
+                    try:
+                        wav_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                else:
+                    self._speak_pyttsx3(sentence)
+
+                future = next_future  # type: ignore[assignment]
 
     def _speak_sapi_subprocess(self, text: str) -> None:
         """Speak via Windows SAPI using PowerShell — works from any thread, no COM affinity."""

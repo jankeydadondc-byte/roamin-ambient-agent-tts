@@ -11,15 +11,15 @@ def router():
 
 
 class TestModelRouter:
-    def test_default_task_routes_to_ollama(self, router):
-        assert router.endpoint("default") == "http://127.0.0.1:11434"
-        assert router.model_id("default") == "qwen3:8b"
+    def test_default_task_routes_to_llama_cpp(self, router):
+        assert router.endpoint("default") == "local://llama_cpp"
+        assert "qwen3-vl" in router.model_id("default").lower() or "abliterated" in router.model_id("default").lower()
 
     def test_code_task_routes_to_coder(self, router):
         assert "coder" in router.model_id("code")
 
-    def test_vision_task_routes_to_lmstudio(self, router):
-        assert router.endpoint("vision") == "http://127.0.0.1:1234"
+    def test_vision_task_routes_to_llama_cpp(self, router):
+        assert router.endpoint("vision") == "local://llama_cpp"
 
     def test_vision_has_screen_reading_capability(self, router):
         assert router.has_capability("vision", "screen_reading") is True
@@ -35,8 +35,8 @@ class TestModelRouter:
         assert result is not None
         assert "model_id" in result
 
-    def test_list_models_returns_all_six(self, router):
-        assert len(router.list_models()) == 6
+    def test_list_models_returns_all_models(self, router):
+        assert len(router.list_models()) == 12
 
     def test_all_models_have_required_fields(self, router):
         for m in router.list_models():

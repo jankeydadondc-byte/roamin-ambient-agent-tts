@@ -46,11 +46,30 @@ WaitForChatterbox
 
 ' Launch WakeListener in visible console window (style=1 = normal) for monitoring
 ' Use python.exe (not pythonw) to enable console output during development
-Dim result
-result = shell.Run("""" & python & """ """ & script & """", 1, False)
+shell.Run """" & python & """ """ & script & """", 1, False
+
+' Read the real PID from the lock file that run_wake_listener.py writes at startup.
+' shell.Run(..., False) always returns 0 — it is not a PID.
+Dim realPid, attempts, lf2, pidStr
+realPid = 0
+attempts = 0
+Do While attempts < 20 And realPid = 0
+    WScript.Sleep 250
+    If fso.FileExists(lockPath) Then
+        On Error Resume Next
+        Set lf2 = fso.OpenTextFile(lockPath, 1)
+        pidStr = Trim(lf2.ReadAll())
+        lf2.Close
+        On Error GoTo 0
+        If IsNumeric(pidStr) And CLng(pidStr) > 0 Then
+            realPid = CLng(pidStr)
+        End If
+    End If
+    attempts = attempts + 1
+Loop
 
 ' Log startup
-WriteLog "WakeListener started PID: " & result
+WriteLog "WakeListener started PID: " & realPid
 
 Function IsPidRunning(pid)
     Dim wmi, procs

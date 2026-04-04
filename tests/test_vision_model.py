@@ -52,20 +52,27 @@ def test_mmproj_map():
 
 
 def test_model_registry_loads():
-    """Verify ModelRegistry can load the model with mmproj (requires GPU)."""
-    print("\nTest 4: ModelRegistry.get_backend('default')...")
+    """Verify ModelRegistry correctly loads default (text-only) and vision (with mmproj)."""
+    print("\nTest 4: ModelRegistry.get_backend...")
     try:
         from agent.core.llama_backend import ModelRegistry
 
         registry = ModelRegistry()
-        backend = registry.get_backend("default")
-        assert backend.is_loaded(), "Backend not loaded after get_backend()"
-        assert backend.mmproj_path is not None, "mmproj_path not set on backend"
-        print(f"  Model loaded: {backend.model_path.name}")
-        print(f"  mmproj loaded: {backend.mmproj_path.name}")
-        print("  PASS: Model loaded with vision projection")
 
-        # Cleanup
+        # default capability: text-only, mmproj should NOT be loaded
+        print("  Loading 'default' (text-only)...")
+        backend = registry.get_backend("default")
+        assert backend.is_loaded(), "Backend not loaded after get_backend('default')"
+        assert backend.mmproj_path is None, "default capability should not load mmproj"
+        print(f"  PASS: {backend.model_path.name} loaded without mmproj")
+        registry.unload_all()
+
+        # vision capability: mmproj MUST be loaded
+        print("  Loading 'vision' (with mmproj)...")
+        vision_backend = registry.get_backend("vision")
+        assert vision_backend.is_loaded(), "Backend not loaded after get_backend('vision')"
+        assert vision_backend.mmproj_path is not None, "vision capability must load mmproj"
+        print(f"  PASS: {vision_backend.model_path.name} loaded with mmproj {vision_backend.mmproj_path.name}")
         registry.unload_all()
         print("  Model unloaded successfully")
     except RuntimeError as e:

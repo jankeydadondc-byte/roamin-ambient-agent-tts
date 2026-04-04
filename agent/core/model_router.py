@@ -122,6 +122,44 @@ class ModelRouter:
         except ImportError as e:
             logger.debug("llama-cpp-python import failed: %s. Falling back to HTTP", e)
 
+        # Try config-based file_path dispatch (filesystem-discovered models)
+        selected = self.select(task)
+        if selected and selected.get("file_path"):
+            try:
+                from agent.core.llama_backend import LlamaCppBackend
+
+                mmproj = Path(selected["mmproj_path"]) if selected.get("mmproj_path") else None
+                n_ctx = selected.get("context_window", 8192)
+                backend = LlamaCppBackend(
+                    model_path=Path(selected["file_path"]),
+                    mmproj_path=mmproj,
+                    n_ctx=n_ctx,
+                )
+                backend.load()
+                try:
+                    if messages is not None:
+                        return backend.chat(
+                            messages,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            no_think=no_think,
+                            stream_think=stream_think,
+                        )
+                    else:
+                        return backend.generate(
+                            prompt,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                        )
+                finally:
+                    backend.unload()
+            except Exception as e:
+                logger.warning(
+                    "Config file_path inference failed for task '%s': %s — falling back to HTTP",
+                    task,
+                    e,
+                )
+
         # Fallback to HTTP (Ollama/LM Studio) with exponential backoff retry
         try:
             import requests

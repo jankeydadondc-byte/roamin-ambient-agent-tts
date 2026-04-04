@@ -1,4 +1,5 @@
 {
+  "model_scan_dirs": [],
   "models": [
     {
       "id": "qwen3-vl-8b-abliterated",
@@ -6,8 +7,18 @@
       "provider": "llama_cpp",
       "model_id": "Qwen3-VL-8B-Instruct-abliterated-v2.Q4_K_M.gguf",
       "endpoint": "local://llama_cpp",
+      "file_path": "C:\\AI\\roamin-ambient-agent-tts\\models\\Qwen3-VL-8B-Instruct-abliterated-v2.Q4_K_M.gguf",
+      "mmproj_path": "C:\\AI\\roamin-ambient-agent-tts\\models\\Qwen3-VL-8B-Instruct-abliterated-v2.mmproj-Q8_0.gguf",
       "size_gb": 4.7,
-      "capabilities": ["fast", "general", "chat", "vision", "screen_reading", "planning", "json_output"],
+      "capabilities": [
+        "fast",
+        "general",
+        "chat",
+        "vision",
+        "screen_reading",
+        "planning",
+        "json_output"
+      ],
       "context_window": 8192,
       "always_available": true,
       "notes": "Unified default model: chat + vision + fast. Abliterated (uncensored). Q4_K_M quantization."
@@ -19,7 +30,13 @@
       "model_id": "qwen3:8b",
       "endpoint": "http://127.0.0.1:11434",
       "size_gb": 5.2,
-      "capabilities": ["fast", "general", "chat", "tool_calling", "json_output"],
+      "capabilities": [
+        "fast",
+        "general",
+        "chat",
+        "tool_calling",
+        "json_output"
+      ],
       "context_window": 32768,
       "always_available": true
     },
@@ -30,7 +47,12 @@
       "model_id": "qwen3-coder:30b",
       "endpoint": "http://127.0.0.1:11434",
       "size_gb": 18.0,
-      "capabilities": ["code", "reasoning", "tool_calling", "json_output"],
+      "capabilities": [
+        "code",
+        "reasoning",
+        "tool_calling",
+        "json_output"
+      ],
       "context_window": 32768,
       "always_available": true
     },
@@ -41,7 +63,11 @@
       "model_id": "DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf",
       "endpoint": "http://127.0.0.1:1234",
       "size_gb": 5.0,
-      "capabilities": ["reasoning", "analysis", "deep_thinking"],
+      "capabilities": [
+        "reasoning",
+        "analysis",
+        "deep_thinking"
+      ],
       "context_window": 32768,
       "always_available": false
     },
@@ -52,7 +78,10 @@
       "model_id": "lmstudio-community/Ministral-3-14B-Reasoning-2512-GGUF/Ministral-3-14B-Reasoning-2512-Q4_K_M.gguf",
       "endpoint": "http://127.0.0.1:1234",
       "size_gb": 8.5,
-      "capabilities": ["reasoning", "deep_thinking"],
+      "capabilities": [
+        "reasoning",
+        "deep_thinking"
+      ],
       "context_window": 32768,
       "always_available": false
     },
@@ -63,10 +92,105 @@
       "model_id": "lmstudio-community/Qwen3-Coder-Next-GGUF/Qwen3-Coder-Next-Q4_K_M.gguf",
       "endpoint": "http://127.0.0.1:1234",
       "size_gb": 45.0,
-      "capabilities": ["code", "heavy_reasoning"],
+      "capabilities": [
+        "code",
+        "heavy_reasoning"
+      ],
       "context_window": 32768,
       "always_available": false,
       "requires_manual_load": true
+    },
+    {
+      "id": "deepseek-r1-0528-qwen3-8b-q4-k-m",
+      "name": "DeepSeek-R1-0528-Qwen3-8B-Q4_K_M",
+      "provider": "llama_cpp",
+      "model_id": "DeepSeek-R1-0528-Qwen3-8B-Q4_K_M",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "reasoning",
+        "deep_thinking",
+        "analysis"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf"
+    },
+    {
+      "id": "deepseek-r1-distill-qwen-14b-q4-k-m",
+      "name": "DeepSeek-R1-Distill-Qwen-14B-Q4_K_M",
+      "provider": "llama_cpp",
+      "model_id": "DeepSeek-R1-Distill-Qwen-14B-Q4_K_M",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "reasoning",
+        "deep_thinking",
+        "analysis"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\DeepSeek-R1-Distill-Qwen-14B-GGUF\\DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf"
+    },
+    {
+      "id": "ministral-3-14b-reasoning-2512-q4-k-m",
+      "name": "Ministral-3-14B-Reasoning-2512-Q4_K_M",
+      "provider": "llama_cpp",
+      "model_id": "Ministral-3-14B-Reasoning-2512-Q4_K_M",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "reasoning",
+        "deep_thinking"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Ministral-3-14B-Reasoning-2512-GGUF\\Ministral-3-14B-Reasoning-2512-Q4_K_M.gguf",
+      "mmproj_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Ministral-3-14B-Reasoning-2512-GGUF\\mmproj-Ministral-3-14B-Reasoning-2512-F16.gguf"
+    },
+    {
+      "id": "qwen2-5-coder-14b-instruct-q4-k-m",
+      "name": "Qwen2.5-Coder-14B-Instruct-Q4_K_M",
+      "provider": "llama_cpp",
+      "model_id": "Qwen2.5-Coder-14B-Instruct-Q4_K_M",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "code",
+        "json_output",
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Qwen2.5-Coder-14B-Instruct-GGUF\\Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
+    },
+    {
+      "id": "qwen3-coder-next-q4-k-m",
+      "name": "Qwen3-Coder-Next-Q4_K_M",
+      "provider": "llama_cpp",
+      "model_id": "Qwen3-Coder-Next-Q4_K_M",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "code",
+        "json_output"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Qwen3-Coder-Next-GGUF\\Qwen3-Coder-Next-Q4_K_M.gguf"
+    },
+    {
+      "id": "qwen3-5-9b-q4-k-m",
+      "name": "Qwen3.5-9B-Q4_K_M",
+      "provider": "llama_cpp",
+      "model_id": "Qwen3.5-9B-Q4_K_M",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Qwen3.5-9B-GGUF\\Qwen3.5-9B-Q4_K_M.gguf",
+      "mmproj_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Qwen3.5-9B-GGUF\\mmproj-Qwen3.5-9B-BF16.gguf"
     }
   ],
   "routing_rules": {
@@ -80,5 +204,9 @@
     "reasoning": "deepseek-r1-8b-lmstudio",
     "analysis": "deepseek-r1-8b-lmstudio"
   },
-  "fallback_chain": ["qwen3-vl-8b-abliterated", "qwen3-8b-ollama", "qwen3-coder-30b-ollama"]
+  "fallback_chain": [
+    "qwen3-vl-8b-abliterated",
+    "qwen3-8b-ollama",
+    "qwen3-coder-30b-ollama"
+  ]
 }

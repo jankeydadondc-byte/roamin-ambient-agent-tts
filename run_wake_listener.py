@@ -17,6 +17,7 @@ from pathlib import Path  # noqa: E402
 
 import keyboard  # noqa: E402,F401 - validates keyboard is available before blocking
 
+from agent.core import model_sync  # noqa: E402
 from agent.core.agent_loop import AgentLoop  # noqa: E402
 from agent.core.model_router import ModelRouter  # noqa: E402
 from agent.core.voice.stt import SpeechToText  # noqa: E402
@@ -164,12 +165,14 @@ def main() -> None:
     sys.stdout = _TeeStream(sys.stdout, log_file)  # type: ignore[assignment]
     sys.stderr = _TeeStream(sys.stderr, log_file)  # type: ignore[assignment]
 
-    # Configure logging — suppress noisy third-party loggers
+    # Configure logging — root at WARNING so unknown third-party loggers are silent;
+    # agent.* re-enabled at DEBUG so our own structured logs still appear.
     logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s - %(levelname)s - %(message)s",
+        level=logging.WARNING,
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         handlers=[logging.StreamHandler(log_file)],
     )
+    logging.getLogger("agent").setLevel(logging.DEBUG)
     for noisy in ("comtypes", "urllib3", "httpx", "chromadb", "posthog", "primp", "ddgs", "h2", "hpack", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
@@ -194,6 +197,13 @@ def main() -> None:
 
     # Pre-load all components ONCE — passed into WakeListener so _on_wake reuses them
     print("[Roamin] Loading components...")
+
+    try:
+        added = model_sync.sync_from_providers()
+        logger.info("model_sync: %d new model(s) added to config", added)
+    except Exception as e:
+        logger.warning("model_sync: unexpected error at startup (continuing): %s", e)
+
     stt = SpeechToText()
     tts = TextToSpeech()
     agent_loop = AgentLoop()
