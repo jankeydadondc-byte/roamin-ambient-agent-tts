@@ -1,0 +1,307 @@
+/* Global layout & accessibility fixes (prevent horizontal overflow) */
+* {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+    overflow: hidden !important;
+}
+
+/* Hide native page scrollbars (visual) while keeping internal scrolling on .vscode-layout */
+html,
+body {
+    -ms-overflow-style: none;
+    /* IE and Edge */
+    scrollbar-width: none;
+    /* Firefox */
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+}
+
+.vscode-workbench {
+    min-width: 0;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.vscode-main,
+.vscode-left,
+.vscode-right {
+    min-width: 0;
+}
+
+.vscode-sidebar {
+    box-sizing: border-box;
+    overflow-y: auto;
+    max-width: 280px;
+}
+
+.vscode-input {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+.logs {
+    max-width: 100%;
+    box-sizing: border-box;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.vscode-card details,
+.logs details,
+.plugin-logs details {
+    width: 100%;
+    max-width: 100%;
+}
+
+.vscode-card details summary {
+    display: block;
+    padding: 6px 0;
+}
+
+.vscode-sidebar .vscode-sidebar-button {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.plugin-logs {
+    box-sizing: border-box;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+:root {
+    --vscode-sideBar-background: #252526;
+    --vscode-activityBar-background: #333333;
+    --vscode-sideBar-foreground: #c6c6c6;
+    --vscode-button-hover: #3e3e42;
+    --vscode-accent: #007acc;
+    --vscode-panel-background: #1e1e1e;
+    --vscode-panel-border: #2c2c2c;
+    --vscode-text: #e6e6e6;
+}
+
+.vscode-workbench {
+    font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #1e1e1e;
+    color: var(--vscode-text);
+    padding: 16px;
+}
+
+.vscode-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.vscode-header h1 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.vscode-header .status {
+    font-size: 12px;
+    color: #9d9d9d
+}
+
+.vscode-sidebar {
+    background: var(--vscode-sideBar-background);
+    color: var(--vscode-sideBar-foreground);
+    border-right: 1px solid #2a2a2a;
+}
+
+.vscode-sidebar .workspace {
+    padding: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between
+}
+
+.vscode-sidebar select {
+    background: transparent;
+    color: var(--vscode-sideBar-foreground);
+    border: 1px solid #3a3a3a;
+    padding: 4px
+}
+
+.vscode-sidebar-button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: transparent;
+    border: none;
+    color: var(--vscode-sideBar-foreground);
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+}
+
+.vscode-sidebar-button:hover {
+    background: var(--vscode-button-hover);
+}
+
+.vscode-sidebar-button.active {
+    background: var(--vscode-accent);
+    color: #fff
+}
+
+.vscode-activitybar-icon {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+    background: #3a3a3a;
+    border-radius: 4px
+}
+
+.vscode-panel {
+    background: var(--vscode-panel-background);
+    border: 1px solid var(--vscode-panel-border);
+    padding: 12px;
+    border-radius: 4px;
+    color: var(--vscode-text)
+}
+
+.vscode-panel h3 {
+    margin-top: 0
+}
+
+.vscode-panel input,
+.vscode-panel select {
+    background: #252526;
+    color: var(--vscode-text);
+    border: 1px solid #3a3a3a;
+    padding: 4px
+}
+
+.logs {
+    height: 240px;
+    overflow: auto;
+    background: #111;
+    color: #eee;
+    padding: 8px;
+    font-family: monospace;
+    font-size: 12px
+}
+
+table.vscode-table {
+    width: 100%;
+    border-collapse: collapse
+}
+
+table.vscode-table td,
+table.vscode-table th {
+    padding: 6px;
+    border-bottom: 1px solid #2a2a2a
+}
+
+/* Layout helpers */
+.vscode-layout {
+    display: flex;
+    gap: 24px;
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+}
+
+.vscode-main {
+    flex: 1;
+    display: flex;
+    gap: 24px;
+    min-height: 0;
+}
+
+.vscode-left {
+    flex: 1;
+    min-height: 0;
+}
+
+.vscode-right {
+    width: 600px;
+    max-width: 40vw;
+    min-height: 0;
+}
+
+/* Panel card variant */
+.vscode-card {
+    background: #f6f6f6;
+    color: #111;
+    border-radius: 6px;
+    padding: 12px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.vscode-card h3 {
+    margin-top: 0
+}
+
+/* Controls */
+.vscode-input {
+    background: #252526;
+    color: var(--vscode-text);
+    border: 1px solid #3a3a3a;
+    padding: 6px;
+    border-radius: 4px
+}
+
+.vscode-button {
+    background: var(--vscode-accent);
+    color: #fff;
+    border: none;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer
+}
+
+.vscode-button[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed
+}
+
+.vscode-small-button {
+    background: #3a3a3a;
+    color: var(--vscode-text);
+    border: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer
+}
+
+/* Logs */
+.logs {
+    height: 240px;
+    overflow: auto;
+    background: #0b0b0b;
+    color: #dcdcdc;
+    padding: 8px;
+    font-family: monospace;
+    font-size: 12px;
+    border-radius: 4px
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+    .vscode-layout {
+        flex-direction: column
+    }
+
+    .vscode-right {
+        width: 100%;
+        max-width: none
+    }
+}

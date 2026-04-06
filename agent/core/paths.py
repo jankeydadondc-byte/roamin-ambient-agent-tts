@@ -249,8 +249,15 @@ def is_safe_mode_active() -> bool:
 
 # Backward compatibility constants for existing code
 
-
 # These will be removed in later phases once all imports are updated
-PROJECT_ROOT = get_project_root()
+# Guard project root discovery at import time so unit tests and tooling that
+# import this module from arbitrary locations don't raise at import time.
+try:
+    PROJECT_ROOT = get_project_root()
+except Exception:
+    from pathlib import Path
+
+    PROJECT_ROOT = Path.cwd()
+
 WORKSPACE_DIR = get_workspace_dir(PROJECT_ROOT)
 CONFIG_FILE = get_config_path(PROJECT_ROOT)

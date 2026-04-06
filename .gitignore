@@ -19,6 +19,12 @@ logs/
 *.sqlite
 chroma_db/
 agent/core/voice/phrase_cache/
+models/
+*.gguf
+
+# Frontend build artifacts
+ui/control-panel/node_modules/
+ui/control-panel/dist/
 
 # Secrets
 *.vault

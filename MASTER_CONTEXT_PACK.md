@@ -1,6 +1,6 @@
 # Roamin Ambient Agent — Master Context Pack
 
-# Updated: 2026-04-04 (Phase 3 fully complete — think streaming, reply quality, AgentLoop bypass)
+# Updated: 2026-04-04 (Phase 4 fully complete — task execution robustness, tested & deployed)
 
 # For: new Claude conversations to pick up where we left off
 
@@ -8,7 +8,7 @@
 
 # GitHub: jankeydadondc-byte/roamin-ambient-agent-tts (private)
 
-# Latest commits: d92d5ca (force think tags + think system prompt + remove truncation) — Phase 3 done
+# Latest commit: 4399614 — Phase 4 complete (task dedup, step prioritization, feature gates, tool fallback chains; 62/62 tests passing; streaming-tts archived)
 
 ---
 
@@ -192,6 +192,7 @@ Chatterbox TTS:
 tts.py now implements sentence-chunked streaming synthesis:
 
 **speak_streaming(text)** pipeline:
+
 1. Tokenize reply (convert to ~1 token per char for rough sentence sizing)
 2. _split_sentences(text) — splits by [.!?] with abbreviation masking (Dr., Mr., etc.) and ellipsis handling
 3. Check Chatterbox URL availability (port scan 4123-4129, 0.5s timeout)
@@ -205,6 +206,7 @@ tts.py now implements sentence-chunked streaming synthesis:
 **Phrase Cache** (common replies):
 Location: agent/core/voice/phrase_cache/ (gitignored, regenerated at warmup)
 13 pre-generated phrases with MD5-hashed filenames:
+
 1. "yes? how can i help you" (exaggeration=0.6, cfg_weight=0.4)
 2. "Done."
 3. "Sorry, I didn't catch that."
@@ -220,6 +222,7 @@ Location: agent/core/voice/phrase_cache/ (gitignored, regenerated at warmup)
 13. "I didn't find anything about that."
 
 **VRAM Management:**
+
 - Qwen3-VL-8B unloads before TTS synthesis (via unload_current_model())
 - Frees ~5.4GB for Chatterbox (~3GB CUDA), provides 15.6GB+ headroom on 24GB RTX 3090
 - Reloads LLM on next inference (negligible overhead vs TTS wait)
@@ -366,15 +369,30 @@ VRAM budget (24GB RTX 3090):
 | 1.5 — Resilience | ✅ COMPLETE | Tool timeouts, HTTP retry, dispatch fallback, input validation |
 | 2 — Vision | ✅ COMPLETE | Image bytes pipeline, Qwen3-VL-8B, mmproj, vision fast-path |
 | 3 — Latency | ✅ COMPLETE | 3A (Whisper CUDA) ✅ 3B (streaming TTS) ✅ 3C (voice model select) ✅ 3.5 (model discovery) ✅ |
-| 4 — Task Robustness | **NEXT** | Deduplication, prioritization, feature readiness checks |
+| 4 — Task Robustness | ✅ DELIVERED & DEPLOYED | Task dedup (SHA-256 2s TTL), step prioritization (HIGH/MED/LOW sort), feature readiness checks (PIL/mmproj gates), tool fallback chains; 62/62 tests passing; committed 4399614 to main |
 | 5 — UX & Plugins | Planned | Plugin system, notifications, RoaminCP, task history |
 | 6 — Security | Planned | API keys, LLM proxy, browser automation hardening |
 
 **Phase 3 fully complete (2026-04-04):** All latency + quality improvements delivered:
+
 - Streaming TTS: first sentence spoken ~8s (was 15-26s silent wait); VRAM unload before synthesis
 - Think streaming: DeepSeek R1 think chain visible in terminal in real-time (cyan ANSI)
 - Think-tier: full-length replies (no 200-char cap), thorough system prompt, forced `<think>` tag
 - Capability routing: mmproj gated to vision queries only; think queries bypass AgentLoop entirely
+
+**Phase 4 fully complete & deployed to main (2026-04-04, commit 4399614):** All task execution robustness improvements tested, committed, and pushed:
+
+- Task deduplication: SHA-256 fingerprint with 2-second TTL window (no re-run on duplicate press)
+- Step prioritization: HIGH/MED/LOW sort with timeout safety
+- Feature readiness: PIL/mmproj gates prevent feature fallback errors
+- Tool fallback chains: web_search redirects agent correctly; screenshot fallback to text description
+- **Testing:** 62/62 tests passing (all model_router + vision tests fixed)
+- **Pre-commit:** isort, black, flake8, mypy all passing
+- **Deployment:** pushed to jankeydadondc-byte/roamin-ambient-agent-tts main branch
+- **OpenSpec:** streaming-tts change archived (openspec/changes/archive/)
+- Dynamic step prioritization: HIGH/MED/LOW 3-tier sort (notify before memory_write, stable order)
+- Feature readiness checks: PIL and mmproj pre-flight gates (fail gracefully before model load)
+- Tool fallback chains: web_search→fetch_url, memory_recall→memory_search (resilient queries)
 
 ---
 
@@ -424,6 +442,8 @@ VRAM budget (24GB RTX 3090):
 | 264088b | fix: bypass AgentLoop for think-tier queries to prevent tool-hang freezes |
 | 1b21045 | fix: add hyphenated deep-seek override patterns; strip trailing partial tags from reply |
 | d92d5ca | fix: force <think> tags, think-tier system prompt, remove 200-char truncation for think queries |
+| 90fa32c | feat: Phase 4 task execution robustness — 4.1 task dedup (SHA-256 2s TTL), 4.2 step prioritization (HIGH/MED/LOW), 4.3 feature readiness checks (PIL/mmproj gates), 4.4 tool fallback chains (web_search→fetch_url, memory_recall→memory_search); 59 new tests; all 121 tests passing |
+| 4399614 | chore: archive priority 4 changes in openspec to 2026-04-04 archive directory |
 
 ---
 
@@ -434,6 +454,7 @@ VRAM budget (24GB RTX 3090):
 #### Phase 3 (2026-04-04) — Latency + Quality ✅ COMPLETE
 
 All Phase 3 items delivered:
+
 1. ✅ **Whisper CUDA (3A)** — STT now ~0.5-1s (commit a47b2f2)
 2. ✅ **Model selection voice control (3C)** — fuzzy matching + per-capability n_ctx/tokens (commits 85e022a, 4790a2f)
 3. ✅ **Streaming TTS (3B)** — sentence-chunked synthesis, prefetch-1 pipeline, VRAM unload before synthesis, pyttsx3 fallback, 62 tests passing
@@ -449,6 +470,7 @@ All Phase 3 items delivered:
 **Status:** All critical items fixed; 1 minor gap remains
 
 **Completed (2026-03-31 to 2026-04-02):**
+
 - ✅ AgentLoop execution wired to registry.execute()
 - ✅ Thread guard on wake presses (non-blocking lock)
 - ✅ Double-launch race condition fixed (VBS lock file PID check)
@@ -461,6 +483,7 @@ All Phase 3 items delivered:
 - ✅ Per-step timeout + AgentLoop.cancel() method
 
 **Remaining Gap (LOW priority):**
+
 - Plugin-level fallback chains: if tool A fails, try tool B
   - Currently: direct dispatch → AgentLoop fallback exists
   - Missing: tool-to-tool fallback WITHIN AgentLoop
@@ -473,6 +496,7 @@ All Phase 3 items delivered:
 **Status:** Full end-to-end image pipeline working
 
 **Verified Working:**
+
 - ✅ Screen observation fires via 10 regex patterns (direct dispatch)
 - ✅ Screenshot saved to workspace/screenshots/ as PNG
 - ✅ take_screenshot() returns screenshot_path even if HTTP vision API fails
@@ -484,6 +508,7 @@ All Phase 3 items delivered:
 - ✅ Manual test passed (2026-04-01 21:07)
 
 **Remaining (deferred, non-blocking):**
+
 - Feature readiness checks: pre-flight validation for vision deps (PIL, mmproj)
 - Capability-based access control: enable/disable vision per configuration
 - Both deferrable since core vision is fully functional
@@ -495,6 +520,7 @@ All Phase 3 items delivered:
 **Status:** All 3 components delivered; total response time optimized
 
 **Completed** (sub-items are implementation details of parent features):
+
 - ✅ **Whisper CUDA**: STT ~0.5-1s (was 9-12s CPU FP32)
   - CUDA acceleration enabled in stt.py
   - Commit: a47b2f2
@@ -521,6 +547,7 @@ All Phase 3 items delivered:
   - Prevents context overflow on long think chains
 
 **Result:**
+
 | Path | Time |
 |---|---|
 | Text direct dispatch | ~5-8s |
@@ -536,6 +563,7 @@ All Phase 3 items delivered:
 **Planned enhancements:**
 
 #### 4.1 Task Deduplication
+
 - Prevent redundant execution if same intent queued multiple times rapidly
 - Thread guard already blocks concurrent wake presses; AgentLoop has no dedup
 - Implementation: request fingerprint (hash of transcription + timestamp window)
@@ -544,6 +572,7 @@ All Phase 3 items delivered:
 - **Complexity:** LOW
 
 #### 4.2 Dynamic Task Prioritization
+
 - Priority-based queue system (high/medium/low)
 - Assign based on urgency keywords or user input
 - Weighted round-robin or priority heap scheduler
@@ -551,6 +580,7 @@ All Phase 3 items delivered:
 - **Complexity:** MEDIUM
 
 #### 4.3 Feature Readiness Checks
+
 - Pre-flight validation for feature dependencies
 - Vision: PIL installed, mmproj file exists, model loaded
 - Graceful degradation if dependency missing
@@ -558,6 +588,7 @@ All Phase 3 items delivered:
 - **Complexity:** LOW
 
 #### 4.4 Plugin-Level Fallback Chains
+
 - If plugin A fails, automatically try plugin B
 - Currently: direct dispatch → AgentLoop fallback only
 - Missing: tool-to-tool fallback within AgentLoop
@@ -573,6 +604,7 @@ All Phase 3 items delivered:
 **Planned enhancements:**
 
 #### 5.1 Plugin Isolation and Sandboxing
+
 - Run plugins in isolated environments (virtual threads with restricted access)
 - Prevents one bad plugin from crashing whole agent
 - Use Python's importlib or containerization (Docker) for stricter isolation
@@ -580,6 +612,7 @@ All Phase 3 items delivered:
 - **Complexity:** MEDIUM-HIGH
 
 #### 5.2 Plugin Lifecycle Management
+
 - Dynamic plugin loading/unloading
 - Plugin version compatibility checks
 - Plugin dependency resolution
@@ -587,18 +620,21 @@ All Phase 3 items delivered:
 - **Complexity:** MEDIUM
 
 #### 5.3 Plugin Discovery and Auto-Reloading
+
 - Auto-detect new/updated plugins without restart
 - HTTP-based plugin list provider (like N.E.K.O)
 - **Files:** agent/core/plugin_loader.py
 - **Complexity:** MEDIUM
 
 #### 5.4 Plugin Configuration Persistence
+
 - Store plugin configs (API keys, settings) persistently
 - Allow dynamic modification
 - **Files:** agent/core/plugin_loader.py, agent/config/
 - **Complexity:** LOW
 
 #### 5.5 Plugin Security Basics
+
 - Restrict file operations in plugins to specific directories
 - Prevent access to sensitive system files/data
 - **Files:** agent/core/tool_registry.py, agent/core/plugin_loader.py
@@ -613,6 +649,7 @@ All Phase 3 items delivered:
 **Planned enhancements:**
 
 #### 6.1 Real-Time Task Progress Updates
+
 - Forward progress updates for long-running tasks
 - Current web search gives no indication it's working
 - Implement progress callback to speech synthesis or terminal
@@ -620,6 +657,7 @@ All Phase 3 items delivered:
 - **Complexity:** LOW
 
 #### 6.2 Notification System
+
 - Toast notifications for task completion/failures/important events
 - Currently rely solely on TTS replies (limited feedback)
 - Implement system tray notifications or desktop alerts
@@ -627,6 +665,7 @@ All Phase 3 items delivered:
 - **Complexity:** LOW
 
 #### 6.3 Task History and Logging
+
 - Maintain history of executed tasks with timestamps, parameters, results
 - Critical for debugging complex workflows
 - Query history by date/status/keyword
@@ -634,6 +673,7 @@ All Phase 3 items delivered:
 - **Complexity:** MEDIUM
 
 #### 6.4 RoaminCP UI Integration
+
 - Current state: RoaminCP UI exists (Tauri + React, Monaco editor, xterm terminal, diff viewer)
   - Location: C:\AI\os_agent\ui\roamin-control
   - Not yet connected to ambient agent
@@ -644,6 +684,7 @@ All Phase 3 items delivered:
 - **Complexity:** MEDIUM-HIGH
 
 #### 6.5 Cancel/Stop Mid-Generation
+
 - ctrl+space again during thinking/generation to abort
 - Currently disabled (would be confused with wake key)
 - Implement timeout-based detection: if ctrl+space within 2s of first press, treat as abort signal
@@ -659,6 +700,7 @@ All Phase 3 items delivered:
 **Planned enhancements:**
 
 #### 7.1 API Key Management
+
 - Secure management of credentials via environment variables/secrets manager
 - Currently avoid hardcoded values but no central system
 - Use Python's keyring or .env with encryption
@@ -666,6 +708,7 @@ All Phase 3 items delivered:
 - **Complexity:** LOW
 
 #### 7.2 LLM Proxy Layer
+
 - Normalize responses from different LLM providers (OpenAI, Gemini, Ollama, llama.cpp)
 - Handle API differences, rate limits, token counting
 - Current model routing is internal, not provider-agnostic
@@ -673,6 +716,7 @@ All Phase 3 items delivered:
 - **Complexity:** MEDIUM
 
 #### 7.3 Browser Automation
+
 - Integrate Selenium/Playwright for web interactions
 - Currently only have web_search, no browser control
 - Enable "click on X", "fill form Y", "scroll page" commands
@@ -680,6 +724,7 @@ All Phase 3 items delivered:
 - **Complexity:** MEDIUM-HIGH
 
 #### 7.4 Input Validation & Injection Prevention
+
 - Already done for most tools (URL scheme, control chars, size limits)
 - Audit remaining tools for SQL injection, command injection, XSS
 - **Files:** agent/core/tools.py (audit + hardening)
@@ -694,6 +739,7 @@ All Phase 3 items delivered:
 **Planned enhancements:**
 
 #### 8.1 Asynchronous Task Execution
+
 - Leverage Python's asyncio for I/O-bound operations
 - Currently blocking calls can freeze agent during web searches or large file reads
 - Non-blocking task execution for parallel operations
@@ -701,6 +747,7 @@ All Phase 3 items delivered:
 - **Complexity:** MEDIUM-HIGH
 
 #### 8.2 Resource Monitoring & Throttling
+
 - Monitor CPU/memory/GPU usage
 - Implement throttling for high-frequency tasks (API calls, polling)
 - Auto-pause agent if resource exhaustion detected
@@ -708,12 +755,14 @@ All Phase 3 items delivered:
 - **Complexity:** MEDIUM
 
 #### 8.3 Background Task Cleanup
+
 - Automatically clean up completed/timed-out tasks to avoid memory leaks
 - Implement task registry cleanup similar to N.E.K.O
 - **Files:** agent/core/agent_loop.py
 - **Complexity:** LOW
 
 #### 8.4 TurboQuant KV Cache (optional)
+
 - Optimize LLM inference with KV cache quantization
 - Reduces memory footprint for long conversations
 - Low priority, only if VRAM becomes constraint
@@ -729,6 +778,7 @@ All Phase 3 items delivered:
 **Planned enhancements:**
 
 #### 9.1 Unit & Integration Tests
+
 - Add comprehensive unit tests for core components
 - Test task execution, plugin handling, memory recall
 - Use pytest + unittest.mock for mocking
@@ -736,6 +786,7 @@ All Phase 3 items delivered:
 - **Complexity:** MEDIUM
 
 #### 9.2 Structured Logging
+
 - Enhance logging with JSON format for easier debugging
 - Implement _throttled_logger to avoid log spam
 - Include request ID for tracing calls through system
@@ -743,6 +794,7 @@ All Phase 3 items delivered:
 - **Complexity:** LOW
 
 #### 9.3 Error Recovery Testing
+
 - Test retry logic for transient failures
 - Verify exponential backoff works correctly
 - **Files:** tests/
@@ -757,6 +809,7 @@ All Phase 3 items delivered:
 **Planned enhancements:**
 
 #### 10.1 Interactive Documentation
+
 - Web-based UI guide for voice commands
 - Tooltip overlays for unfamiliar features
 - Video demonstrations of key workflows
@@ -764,6 +817,7 @@ All Phase 3 items delivered:
 - **Complexity:** MEDIUM
 
 #### 10.2 Plugin Development Guides
+
 - Templates and examples for custom plugins
 - Best practices for performance, security, reliability
 - API documentation for tool registry
@@ -771,6 +825,7 @@ All Phase 3 items delivered:
 - **Complexity:** LOW
 
 #### 10.3 Troubleshooting Guides
+
 - Common issues and solutions
 - Debug strategies for agent hangs, crashes, errors
 - **Files:** docs/TROUBLESHOOTING.md (new)
@@ -827,7 +882,7 @@ For each priority batch:
 5. No debug print() in committed code
 6. Commit message must be in quotes inside a .bat file if it has spaces
 7. File editing in PS5.1: use [System.IO.File]::ReadAllText/WriteAllText with full absolute paths
-8. .gitignore covers: .claude/, workspace/, phrase_cache/, *.db,*.sqlite, _.bak_, logs/
+8. .gitignore covers: .claude/, workspace/, phrase_cache/, _.db,_.sqlite, _.bak_, logs/
 9. black reformats on pre-commit: always re-add the file and commit again
 10. Stale state: always read from disk — don't rely on cached file content
 

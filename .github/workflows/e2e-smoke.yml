@@ -1,0 +1,50 @@
+name: E2E Smoke Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start Control API
+        run: |
+          nohup python run_control_api.py > control_api.log 2>&1 &
+          echo "started"
+
+      - name: Wait for Control API
+        run: |
+          for i in {1..30}; do
+            if curl -sS http://127.0.0.1:8765/status >/dev/null; then
+              echo "control api up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "control api failed to start"; tail -n +1 control_api.log || true; exit 1
+
+      - name: Run E2E smoke test
+        run: pytest -q tests/test_e2e_smoke.py
+
+      - name: Upload control_api.log on failure
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: control_api-log
+          path: control_api.log
+          if-no-files-found: warn

@@ -1,0 +1,9 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^openspec new change \"cancel-hotkey-wiring\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "openspec": true
+    }
+}
