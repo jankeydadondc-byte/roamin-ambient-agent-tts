@@ -145,6 +145,7 @@ class AgentLoop:
                         "phase": "step_done",
                         "step": i + 1,
                         "total_steps": len(plan),
+                        "status": step_result.get("status"),
                     }
                 )
             # Log step to task history (non-fatal)

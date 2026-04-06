@@ -647,6 +647,10 @@ class WakeListener:
                     step_num = event.get("step", 0)
                     if total > 2 and tts.is_available():
                         tts.speak(f"Step {step_num} of {total}.")
+                elif phase == "step_done" and event.get("status") == "blocked":
+                    step_num = event.get("step", 0)
+                    if tts.is_available():
+                        tts.speak(f"Step {step_num} couldn't be completed, it needs approval.")
 
             try:
                 self._agent_running_event.set()
