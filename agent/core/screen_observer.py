@@ -153,19 +153,39 @@ class ScreenObserver:
         }
 
 
-def _notify_windows(message: str) -> None:
-    """Send Windows toast notification."""
-    # PowerShell Add-Type approach for modern Windows 10/11 notifications
+def _notify_windows(message: str, title: str = "Roamin") -> None:
+    """Send Windows toast notification (non-blocking).
+
+    Uses winotify for native Windows 10/11 toasts when available.
+    Falls back to WScript.Shell.Popup() if winotify is not installed.
+    """
+    try:
+        from winotify import Notification
+
+        toast = Notification(app_id="Roamin", title=title, msg=message)
+        toast.set_audio(audio=None, silent=True)
+        toast.show()
+        return
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # Fallback: legacy WScript.Shell popup (blocking, modal)
     powershell_script = f"""
 Add-Type -AssemblyName System.Windows.Forms
 $shell = New-Object -ComObject WScript.Shell
-$shell.Popup("{message}", 0, "Roamin Observation", 0x40)
+$shell.Popup("{message}", 0, "{title}", 0x40)
 """
-
     try:
-        subprocess.run(["powershell", "-Command", powershell_script], check=True, capture_output=True, timeout=5)
+        subprocess.run(
+            ["powershell", "-Command", powershell_script],
+            check=True,
+            capture_output=True,
+            timeout=5,
+        )
     except Exception:
-        pass  # Non-critical notification failure
+        pass
 
 
 class ObservationScheduler:

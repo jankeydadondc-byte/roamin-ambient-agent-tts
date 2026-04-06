@@ -30,6 +30,7 @@ numpy>=1.26.0
 
 # --- Windows ---
 pywin32>=306
+winotify>=1.1.0
 
 # --- LM Studio SDK ---
 lmstudio>=1.5.0

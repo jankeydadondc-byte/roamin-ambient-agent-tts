@@ -62,6 +62,38 @@ class MemoryStore:
                 )
             """
             )
+            # --- Task history tables (Priority 6.3) ---
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS task_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    goal TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    task_type TEXT,
+                    started_at DATETIME NOT NULL,
+                    finished_at DATETIME,
+                    step_count INTEGER DEFAULT 0
+                )
+            """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS task_steps (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_run_id INTEGER NOT NULL,
+                    step_number INTEGER NOT NULL,
+                    tool TEXT,
+                    action TEXT,
+                    params_json TEXT,
+                    outcome TEXT,
+                    status TEXT NOT NULL,
+                    started_at DATETIME,
+                    finished_at DATETIME,
+                    duration_ms INTEGER,
+                    FOREIGN KEY (task_run_id) REFERENCES task_runs(id)
+                )
+            """
+            )
             conn.commit()
 
     # --- CREATE operations ---
@@ -345,3 +377,111 @@ class MemoryStore:
             )
             conn.commit()
             return cursor.rowcount > 0
+
+    # --- Task history operations (Priority 6.3) ---
+
+    def create_task_run(self, goal: str, task_type: str) -> int:
+        """Create a new task run record. Returns the row id."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO task_runs (goal, status, task_type, started_at)
+                VALUES (?, 'started', ?, datetime('now'))
+            """,
+                (goal, task_type),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def add_task_step(
+        self,
+        task_run_id: int,
+        step_number: int,
+        tool: str | None,
+        action: str | None,
+        params_json: str | None,
+        outcome: str | None,
+        status: str,
+        duration_ms: int | None = None,
+    ) -> int:
+        """Record a single step within a task run."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO task_steps
+                    (task_run_id, step_number, tool, action, params_json,
+                     outcome, status, started_at, finished_at, duration_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), ?)
+            """,
+                (task_run_id, step_number, tool, action, params_json, outcome, status, duration_ms),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def finish_task_run(self, task_run_id: int, status: str, step_count: int) -> bool:
+        """Mark a task run as finished with final status and step count."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE task_runs
+                SET status = ?, step_count = ?, finished_at = datetime('now')
+                WHERE id = ?
+            """,
+                (status, step_count, task_run_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def get_task_runs(
+        self,
+        limit: int = 50,
+        status: str | None = None,
+        since: str | None = None,
+    ) -> list[dict]:
+        """Query task runs with optional filters."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            query = "SELECT * FROM task_runs WHERE 1=1"
+            params: list = []
+            if status:
+                query += " AND status = ?"
+                params.append(status)
+            if since:
+                query += " AND started_at >= ?"
+                params.append(since)
+            query += " ORDER BY id DESC LIMIT ?"
+            params.append(limit)
+            cursor.execute(query, params)
+            columns = [col[0] for col in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    def get_task_steps(self, task_run_id: int) -> list[dict]:
+        """Get all steps for a given task run."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM task_steps WHERE task_run_id = ? ORDER BY step_number",
+                (task_run_id,),
+            )
+            columns = [col[0] for col in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    def search_task_history(self, keyword: str) -> list[dict]:
+        """Search task runs by keyword in goal or step action text."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            like_pat = f"%{keyword}%"
+            cursor.execute(
+                """
+                SELECT DISTINCT tr.* FROM task_runs tr
+                LEFT JOIN task_steps ts ON tr.id = ts.task_run_id
+                WHERE tr.goal LIKE ? OR ts.action LIKE ?
+                ORDER BY tr.id DESC
+            """,
+                (like_pat, like_pat),
+            )
+            columns = [col[0] for col in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]

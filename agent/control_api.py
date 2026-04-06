@@ -282,8 +282,37 @@ async def uninstall_plugin(plugin_id: str) -> dict[str, Any]:
 
 
 @app.get("/task-history")
-async def task_history() -> dict[str, Any]:
-    return {"tasks": app.state.tasks}
+async def task_history(
+    since: str | None = None,
+    status: str | None = None,
+    q: str | None = None,
+) -> dict[str, Any]:
+    """Return persistent task history from SQLite (with optional filters).
+
+    Falls back to in-memory tasks if the MemoryStore is unavailable.
+    """
+    try:
+        from agent.core.memory import MemoryManager
+
+        mm = MemoryManager()
+        runs = mm.query_tasks(limit=50, status=status, since=since, keyword=q)
+        return {"tasks": runs}
+    except Exception:
+        # Fallback to in-memory plugin/action tasks
+        return {"tasks": app.state.tasks}
+
+
+@app.get("/task-history/{task_id}/steps")
+async def task_steps(task_id: int) -> dict[str, Any]:
+    """Return steps for a specific task run."""
+    try:
+        from agent.core.memory.memory_store import MemoryStore
+
+        store = MemoryStore()
+        steps = store.get_task_steps(task_id)
+        return {"steps": steps}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/actions/{action}")

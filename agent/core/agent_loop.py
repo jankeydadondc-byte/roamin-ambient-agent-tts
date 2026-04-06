@@ -6,6 +6,8 @@ import concurrent.futures
 import json
 import logging
 import threading
+import time
+from collections.abc import Callable
 
 from agent.core.context_builder import ContextBuilder
 from agent.core.memory import MemoryManager
@@ -39,7 +41,12 @@ class AgentLoop:
         self._cancel_event.set()
         logger.info("AgentLoop cancel requested")
 
-    def run(self, goal: str, include_screen: bool = False) -> dict:
+    def run(
+        self,
+        goal: str,
+        include_screen: bool = False,
+        on_progress: Callable[[dict], None] | None = None,
+    ) -> dict:
         """
         Execute a goal.
 
@@ -70,6 +77,13 @@ class AgentLoop:
             result["error"] = readiness_msg
             return result
 
+        # Start task history record (non-fatal if it fails)
+        task_run_id: int | None = None
+        try:
+            task_run_id = self._memory.start_task(goal, task_type)
+        except Exception:
+            pass
+
         # Gather screen context if requested
         screen_obs = None
         if include_screen:
@@ -82,29 +96,78 @@ class AgentLoop:
         context = self._context_builder.build(goal, screen_observation=screen_obs)
 
         # Generate plan from model
+        if on_progress:
+            on_progress({"phase": "planning", "detail": "Planning..."})
         plan = self._generate_plan(goal, context, task_type)
         if plan is None:
             result["status"] = "failed"
             result["error"] = "Could not generate plan (model unreachable or returned invalid response)"
+            if task_run_id is not None:
+                try:
+                    self._memory.finish_task(task_run_id, "failed", 0)
+                except Exception:
+                    pass
             return result
 
         # Sort steps by priority before execution: HIGH first, LOW last (stable sort)
         plan = sorted(plan, key=self._priority_score)
 
+        if on_progress:
+            on_progress({"phase": "executing", "total_steps": len(plan)})
+
         # Execute each step — check for cancellation between steps
-        for step in plan:
+        for i, step in enumerate(plan):
             if self._cancel_event.is_set():
                 result["status"] = "cancelled"
                 result["cancelled_at_step"] = step.get("step")
                 logger.info("AgentLoop cancelled at step %s", step.get("step"))
+                if task_run_id is not None:
+                    try:
+                        self._memory.finish_task(task_run_id, "cancelled", len(result["steps"]))
+                    except Exception:
+                        pass
                 return result
+            if on_progress:
+                on_progress(
+                    {
+                        "phase": "step_start",
+                        "step": i + 1,
+                        "total_steps": len(plan),
+                        "detail": (step.get("action") or "")[:60],
+                    }
+                )
+            step_start_time = time.perf_counter()
             step_result = self._execute_step(step)
+            step_duration_ms = int((time.perf_counter() - step_start_time) * 1000)
+            if on_progress:
+                on_progress(
+                    {
+                        "phase": "step_done",
+                        "step": i + 1,
+                        "total_steps": len(plan),
+                    }
+                )
+            # Log step to task history (non-fatal)
+            if task_run_id is not None:
+                try:
+                    self._memory.log_step(
+                        task_run_id,
+                        i + 1,
+                        step.get("tool"),
+                        step.get("action"),
+                        json.dumps(step.get("params", {})),
+                        (step_result.get("outcome") or "")[:1500],
+                        step_result.get("status", "unknown"),
+                        step_duration_ms,
+                    )
+                except Exception:
+                    pass
             if step_result.get("blocked"):
                 result["blocked_steps"].append(step_result)
             else:
                 result["steps"].append(step_result)
 
-        # Store in memory
+        # Store in memory (legacy actions_taken table — kept for backward compat)
         try:
             self._memory.write_to_memory(
                 "action",
@@ -119,6 +182,14 @@ class AgentLoop:
             pass
 
         result["status"] = "completed" if result["steps"] else "blocked"
+
+        # Finish task history record
+        if task_run_id is not None:
+            try:
+                self._memory.finish_task(task_run_id, result["status"], len(result["steps"]))
+            except Exception:
+                pass
+
         return result
 
     def _classify_task(self, goal: str) -> str:

@@ -518,7 +518,7 @@ def _notify(params: dict) -> dict:
     try:
         from agent.core.screen_observer import _notify_windows
 
-        _notify_windows(f"{title}: {message}")
+        _notify_windows(message, title=title)
         return _ok(f"Notification sent: {message}")
     except Exception as e:
         return _fail(str(e))

@@ -50,6 +50,9 @@ CACHED_PHRASES: list[str] = [
     "Give me a second.",
     "Anything else?",
     "I didn't find anything about that.",
+    "Let me think...",
+    "Already on it.",
+    "Got it, stopping.",
 ]
 
 # Per-phrase synthesis overrides — tune exaggeration/cfg_weight per phrase

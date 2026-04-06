@@ -635,10 +635,27 @@ class WakeListener:
             result = {}
             goal_lower = transcription.lower()
             include_screen = any(w in goal_lower for w in ["screen", "look at", "looking at", "what am i", "what's on"])
+
+            def _progress_handler(event: dict) -> None:
+                """Speak TTS cues for AgentLoop progress events."""
+                phase = event.get("phase")
+                if phase == "planning":
+                    if tts.is_available():
+                        tts.speak("Let me think...")
+                elif phase == "step_start":
+                    total = event.get("total_steps", 0)
+                    step_num = event.get("step", 0)
+                    if total > 2 and tts.is_available():
+                        tts.speak(f"Step {step_num} of {total}.")
+
             try:
                 self._agent_running_event.set()
                 try:
-                    result = agent_loop.run(transcription, include_screen=include_screen)
+                    result = agent_loop.run(
+                        transcription,
+                        include_screen=include_screen,
+                        on_progress=_progress_handler,
+                    )
                 finally:
                     self._agent_running_event.clear()
             except Exception as e:

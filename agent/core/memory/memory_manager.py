@@ -77,3 +77,41 @@ class MemoryManager:
         """
         rows = self.store.get_conversation_history(session_id=session_id)
         return rows[-limit:][::-1]
+
+    # --- Task history pass-throughs (Priority 6.3) ---
+
+    def start_task(self, goal: str, task_type: str) -> int:
+        """Create a new task run and return its id."""
+        return self.store.create_task_run(goal, task_type)
+
+    def log_step(
+        self,
+        task_run_id: int,
+        step_number: int,
+        tool: str | None,
+        action: str | None,
+        params_json: str | None,
+        outcome: str | None,
+        status: str,
+        duration_ms: int | None = None,
+    ) -> int:
+        """Record a single step within a task run."""
+        return self.store.add_task_step(
+            task_run_id, step_number, tool, action, params_json, outcome, status, duration_ms
+        )
+
+    def finish_task(self, task_run_id: int, status: str, step_count: int) -> bool:
+        """Mark a task run as finished."""
+        return self.store.finish_task_run(task_run_id, status, step_count)
+
+    def query_tasks(
+        self,
+        limit: int = 50,
+        status: str | None = None,
+        since: str | None = None,
+        keyword: str | None = None,
+    ) -> list[dict]:
+        """Query task history with optional filters."""
+        if keyword:
+            return self.store.search_task_history(keyword)
+        return self.store.get_task_runs(limit=limit, status=status, since=since)
