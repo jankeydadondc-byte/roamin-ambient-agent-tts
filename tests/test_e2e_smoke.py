@@ -4,7 +4,9 @@ import time
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-BASE = os.environ.get("CONTROL_API_URL", "http://127.0.0.1:8765")
+from agent.core.ports import get_control_api_url
+
+BASE = os.environ.get("CONTROL_API_URL") or get_control_api_url()
 
 
 def wait_for_service(timeout=30):
