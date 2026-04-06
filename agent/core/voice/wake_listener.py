@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import difflib
 import io
+import json
 import re
 import sys
 import threading
@@ -16,9 +17,11 @@ try:
 except ImportError:
     keyboard = None
 
+from agent.core import paths, ports
 from agent.core.agent_loop import AgentLoop
 from agent.core.memory import MemoryManager
 from agent.core.model_router import ModelRouter
+from agent.core.screen_observer import _notify_approval_toast
 from agent.core.tool_registry import ToolRegistry
 from agent.core.voice.stt import SpeechToText
 from agent.core.voice.tts import TextToSpeech
@@ -336,6 +339,32 @@ def _try_direct_dispatch(transcription: str, registry: ToolRegistry) -> dict | N
         return registry.execute("list_processes", {})
 
     return None
+
+
+def _handle_blocked_steps(blocked_steps: list[dict], memory: MemoryManager) -> None:
+    """Persist blocked steps and show an approval toast for each."""
+    if not blocked_steps:
+        return
+    # Discover Control API port from discovery file
+    port = ports.CONTROL_API_DEFAULT_PORT
+    try:
+        discovery_file = paths.get_project_root() / ".loom" / "control_api_port.json"
+        port = json.loads(discovery_file.read_text()).get("port", port)
+    except Exception:
+        pass
+    for step in blocked_steps:
+        try:
+            aid = memory.store_pending_approval(
+                task_run_id=None,
+                step_number=step.get("step", 0),
+                tool=step.get("tool"),
+                action=step.get("action", ""),
+                params_json=None,
+                risk=step.get("risk", "high"),
+            )
+            _notify_approval_toast(aid, step.get("action", ""), step.get("tool"), port)
+        except Exception:
+            pass
 
 
 class WakeListener:
@@ -684,7 +713,8 @@ class WakeListener:
                 return
             if status == "blocked":
                 if tts.is_available():
-                    tts.speak("That action needs your approval.")
+                    tts.speak("That requires your approval. Check your notifications.")
+                _handle_blocked_steps(result.get("blocked_steps", []), memory)
                 return
 
             # Collect tool outputs from executed steps (skip null-tool reasoning steps)
@@ -805,6 +835,9 @@ class WakeListener:
         t_spoken = time.perf_counter()
         print(f"[Roamin] t={t_spoken - t0:.3f}s  Reply spoken (+{t_spoken - t_reply:.3f}s)")
         print(f"[Roamin] TOTAL: {t_spoken - t0:.3f}s")
+
+        # Show approval toasts for any blocked steps (non-fatal)
+        _handle_blocked_steps(result.get("blocked_steps", []) if result else [], memory)
 
         # Store conversation in memory
         try:

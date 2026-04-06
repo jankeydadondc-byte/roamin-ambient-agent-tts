@@ -188,6 +188,21 @@ $shell.Popup("{message}", 0, "{title}", 0x40)
         pass
 
 
+def _notify_approval_toast(approval_id: int, action: str, tool: str | None, port: int) -> None:
+    """Show a winotify toast with Approve/Deny buttons for a blocked step."""
+    try:
+        from winotify import Notification
+
+        base = f"http://127.0.0.1:{port}"
+        label = f"{tool}: {action[:80]}" if tool else action[:80]
+        toast = Notification(app_id="Roamin", title="Action needs approval", msg=label)
+        toast.add_actions("Approve", f"{base}/approve/{approval_id}")
+        toast.add_actions("Deny", f"{base}/deny/{approval_id}")
+        toast.show()
+    except Exception:
+        pass  # never fatal
+
+
 class ObservationScheduler:
     def __init__(self):
         self._thread = None

@@ -19,7 +19,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from agent.core import paths, ports
 
@@ -311,6 +311,80 @@ async def task_steps(task_id: int) -> dict[str, Any]:
         store = MemoryStore()
         steps = store.get_task_steps(task_id)
         return {"steps": steps}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+_CLOSE_HTML = """<html><body style="font-family:sans-serif;padding:2em">
+<p>{msg}</p><script>setTimeout(()=>window.close(),1500)</script></body></html>"""
+
+
+@app.get("/pending-approvals")
+async def list_pending_approvals() -> dict[str, Any]:
+    """Return all steps currently awaiting user approval."""
+    try:
+        from agent.core.memory.memory_store import MemoryStore
+
+        store = MemoryStore()
+        return {"approvals": store.get_pending_approvals()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/approve/{approval_id}", response_class=HTMLResponse)
+async def approve_step(approval_id: int) -> HTMLResponse:
+    """Execute an approved blocked step and mark it resolved."""
+    try:
+        from agent.core.memory.memory_store import MemoryStore
+        from agent.core.screen_observer import _notify_windows
+        from agent.core.tool_registry import ToolRegistry
+
+        store = MemoryStore()
+        record = store.get_pending_approval(approval_id)
+        if record is None:
+            return HTMLResponse(_CLOSE_HTML.format(msg="Approval not found."), status_code=404)
+        if record["status"] != "pending":
+            return HTMLResponse(_CLOSE_HTML.format(msg=f"Already {record['status']}."))
+
+        # Execute the step via ToolRegistry
+        tool_name = record.get("tool")
+        params: dict[str, Any] = {}
+        if record.get("params_json"):
+            try:
+                params = json.loads(record["params_json"])
+            except Exception:
+                pass
+
+        outcome = ""
+        if tool_name:
+            registry = ToolRegistry()
+            result = registry.execute(tool_name, params)
+            outcome = str(result.get("result") or result.get("error", ""))[:200]
+
+        store.resolve_approval(approval_id, "approved")
+        await _broadcast({"type": "approval_resolved", "data": {"id": approval_id, "status": "approved"}})
+        _notify_windows(f"Approved: {outcome or record['action'][:60]}", title="Roamin — Step Approved")
+        return HTMLResponse(_CLOSE_HTML.format(msg=f"Step approved and executed. {outcome}"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/deny/{approval_id}", response_class=HTMLResponse)
+async def deny_step(approval_id: int) -> HTMLResponse:
+    """Mark a blocked step as denied without executing it."""
+    try:
+        from agent.core.memory.memory_store import MemoryStore
+
+        store = MemoryStore()
+        record = store.get_pending_approval(approval_id)
+        if record is None:
+            return HTMLResponse(_CLOSE_HTML.format(msg="Approval not found."), status_code=404)
+        if record["status"] != "pending":
+            return HTMLResponse(_CLOSE_HTML.format(msg=f"Already {record['status']}."))
+
+        store.resolve_approval(approval_id, "denied")
+        await _broadcast({"type": "approval_resolved", "data": {"id": approval_id, "status": "denied"}})
+        return HTMLResponse(_CLOSE_HTML.format(msg="Step denied."))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

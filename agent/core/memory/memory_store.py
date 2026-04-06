@@ -94,6 +94,23 @@ class MemoryStore:
                 )
             """
             )
+            # --- HITL approval table ---
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pending_approvals (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_run_id INTEGER,
+                    step_number INTEGER NOT NULL,
+                    tool        TEXT,
+                    action      TEXT NOT NULL,
+                    params_json TEXT,
+                    risk        TEXT DEFAULT 'high',
+                    status      TEXT NOT NULL DEFAULT 'pending',
+                    created_at  DATETIME NOT NULL,
+                    resolved_at DATETIME
+                )
+            """
+            )
             conn.commit()
 
     # --- CREATE operations ---
@@ -483,5 +500,64 @@ class MemoryStore:
             """,
                 (like_pat, like_pat),
             )
+            columns = [col[0] for col in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    # --- HITL pending approval operations ---
+
+    def create_pending_approval(
+        self,
+        task_run_id: int | None,
+        step_number: int,
+        tool: str | None,
+        action: str,
+        params_json: str | None,
+        risk: str = "high",
+    ) -> int:
+        """Store a blocked step awaiting user approval. Returns the row id."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO pending_approvals
+                    (task_run_id, step_number, tool, action, params_json, risk, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', datetime('now'))
+                """,
+                (task_run_id, step_number, tool, action, params_json, risk),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_pending_approval(self, approval_id: int) -> dict | None:
+        """Load a single pending approval record by id."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM pending_approvals WHERE id = ?", (approval_id,))
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            columns = [col[0] for col in cursor.description]
+            return dict(zip(columns, row))
+
+    def resolve_approval(self, approval_id: int, status: str) -> bool:
+        """Mark an approval as 'approved' or 'denied'. Returns True if a row was updated."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE pending_approvals
+                SET status = ?, resolved_at = datetime('now')
+                WHERE id = ?
+                """,
+                (status, approval_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def get_pending_approvals(self) -> list[dict]:
+        """Return all unresolved (pending) approvals."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM pending_approvals WHERE status = 'pending' ORDER BY id DESC")
             columns = [col[0] for col in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]

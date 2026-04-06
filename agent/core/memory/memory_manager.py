@@ -104,6 +104,28 @@ class MemoryManager:
         """Mark a task run as finished."""
         return self.store.finish_task_run(task_run_id, status, step_count)
 
+    # --- HITL approval pass-throughs ---
+
+    def store_pending_approval(
+        self,
+        task_run_id: int | None,
+        step_number: int,
+        tool: str | None,
+        action: str,
+        params_json: str | None,
+        risk: str = "high",
+    ) -> int:
+        """Persist a blocked step awaiting user approval."""
+        return self.store.create_pending_approval(task_run_id, step_number, tool, action, params_json, risk)
+
+    def get_pending_approval(self, approval_id: int) -> dict | None:
+        """Load a single pending approval by id."""
+        return self.store.get_pending_approval(approval_id)
+
+    def resolve_approval(self, approval_id: int, status: str) -> bool:
+        """Mark an approval resolved ('approved' or 'denied')."""
+        return self.store.resolve_approval(approval_id, status)
+
     def query_tasks(
         self,
         limit: int = 50,
