@@ -22,14 +22,9 @@ This archive entry records the final state of the OpenSpec change `ux-plugins-co
 - [x] Source artifacts recorded
 - [x] Local verification performed (SPA build + pytest smoke)
 - [x] CI skeleton added (smoke job)
-- [ ] Playwright E2E added and passing in CI
-- [ ] Accessibility audit completed and fixes applied
+- [~] Playwright E2E — **DEFERRED**: not applicable for a single-user local tool; infrastructure overhead outweighs benefit
+- [~] Accessibility audit — **DEFERRED**: solo developer tool, not a public product, no regulatory requirement
 
-## Notes and next steps
+## Final status: ARCHIVED (2026-04-05)
 
-- See `../ux-plugins-control-panel-next/testing_and_ci.md` for run instructions and CI recommendations.
-- When Playwright tests and accessibility fixes are complete, update this archive file with the CI results and mark the change fully complete.
-
----
-
-Archived by automation on 2026-04-05. If you prefer to keep the working files in the active folder, let me know and I will not move or delete anything else.
+All meaningful work complete. Playwright E2E and a11y audit explicitly deferred — they are engineering hygiene items relevant for public/multi-user products, not for Roamin's personal local use case. If Roamin ever ships publicly this can be revisited.

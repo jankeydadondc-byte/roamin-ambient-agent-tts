@@ -370,7 +370,7 @@ VRAM budget (24GB RTX 3090):
 | 2 — Vision | ✅ COMPLETE | Image bytes pipeline, Qwen3-VL-8B, mmproj, vision fast-path |
 | 3 — Latency | ✅ COMPLETE | 3A (Whisper CUDA) ✅ 3B (streaming TTS) ✅ 3C (voice model select) ✅ 3.5 (model discovery) ✅ |
 | 4 — Task Robustness | ✅ DELIVERED & DEPLOYED | Task dedup (SHA-256 2s TTL), step prioritization (HIGH/MED/LOW sort), feature readiness checks (PIL/mmproj gates), tool fallback chains; 62/62 tests passing; committed 4399614 to main |
-| 5 — UX & Plugins | Planned | Plugin system, notifications, RoaminCP, task history |
+| 5 — UX & Plugins | ⏳ PARTIAL | Control API skeleton ✅ React SPA ✅ Playwright E2E + a11y deferred (personal tool) |
 | 6 — Security | Planned | API keys, LLM proxy, browser automation hardening |
 
 **Phase 3 fully complete (2026-04-04):** All latency + quality improvements delivered:
@@ -444,6 +444,7 @@ VRAM budget (24GB RTX 3090):
 | d92d5ca | fix: force <think> tags, think-tier system prompt, remove 200-char truncation for think queries |
 | 90fa32c | feat: Phase 4 task execution robustness — 4.1 task dedup (SHA-256 2s TTL), 4.2 step prioritization (HIGH/MED/LOW), 4.3 feature readiness checks (PIL/mmproj gates), 4.4 tool fallback chains (web_search→fetch_url, memory_recall→memory_search); 59 new tests; all 121 tests passing |
 | 4399614 | chore: archive priority 4 changes in openspec to 2026-04-04 archive directory |
+| 99a7306 | chore: commit all untracked work — Control API, React SPA, openspec docs, Phase 3/4/5 artifacts; 125/125 tests passing |
 
 ---
 
