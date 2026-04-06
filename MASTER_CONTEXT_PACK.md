@@ -1,6 +1,6 @@
 # Roamin Ambient Agent — Master Context Pack
 
-# Updated: 2026-04-04 (Phase 4 fully complete — task execution robustness, tested & deployed)
+# Updated: 2026-04-06 (Priority 6 fully complete — toasts, task progress, persistent history + HITL approval flow; 165/165 tests passing)
 
 # For: new Claude conversations to pick up where we left off
 
@@ -8,7 +8,7 @@
 
 # GitHub: jankeydadondc-byte/roamin-ambient-agent-tts (private)
 
-# Latest commit: 4399614 — Phase 4 complete (task dedup, step prioritization, feature gates, tool fallback chains; 62/62 tests passing; streaming-tts archived)
+# Latest commit: 5054985 — HITL approval flow + dynamic port discovery for e2e test (control API toasts, winotify Approve/Deny buttons, pending_approvals SQLite, ToolRegistry direct execution, test_e2e_smoke uses get_control_api_url(); 165/165 tests passing)
 
 ---
 
@@ -371,7 +371,8 @@ VRAM budget (24GB RTX 3090):
 | 3 — Latency | ✅ COMPLETE | 3A (Whisper CUDA) ✅ 3B (streaming TTS) ✅ 3C (voice model select) ✅ 3.5 (model discovery) ✅ |
 | 4 — Task Robustness | ✅ DELIVERED & DEPLOYED | Task dedup (SHA-256 2s TTL), step prioritization (HIGH/MED/LOW sort), feature readiness checks (PIL/mmproj gates), tool fallback chains; 62/62 tests passing; committed 4399614 to main |
 | 5 — UX & Plugins | ⏳ PARTIAL | Control API skeleton ✅ React SPA ✅ Playwright E2E + a11y deferred (personal tool) |
-| 6 — Security | Planned | API keys, LLM proxy, browser automation hardening |
+| 6 — Toast Notifications & Task History | ✅ COMPLETE | Toasts (on_progress events), persistent task_runs/task_steps SQLite, HITL approval flow (winotify Approve/Deny buttons, pending_approvals table, ToolRegistry direct execution); dynamic port discovery for e2e test; 165/165 tests passing; committed 5054985 to main |
+| 7 — Security | Planned | API keys, LLM proxy, browser automation hardening |
 
 **Phase 3 fully complete (2026-04-04):** All latency + quality improvements delivered:
 
@@ -445,6 +446,9 @@ VRAM budget (24GB RTX 3090):
 | 90fa32c | feat: Phase 4 task execution robustness — 4.1 task dedup (SHA-256 2s TTL), 4.2 step prioritization (HIGH/MED/LOW), 4.3 feature readiness checks (PIL/mmproj gates), 4.4 tool fallback chains (web_search→fetch_url, memory_recall→memory_search); 59 new tests; all 121 tests passing |
 | 4399614 | chore: archive priority 4 changes in openspec to 2026-04-04 archive directory |
 | 99a7306 | chore: commit all untracked work — Control API, React SPA, openspec docs, Phase 3/4/5 artifacts; 125/125 tests passing |
+| (session 2026-04-06) | feat: Priority 6 complete — toast notifications for on_progress events, persistent task_runs/task_steps history, HITL approval flow (winotify Approve/Deny buttons, pending_approvals SQLite CRUD, ToolRegistry direct execution, wake_listener._handle_blocked_steps, Control API endpoints /approve/deny/pending-approvals); 13 tests; 164/165 passing |
+| af9b59c | feat: HITL approval flow — blocked steps persist and toast for Approve/Deny (pending_approvals table, _notify_approval_toast, _handle_blocked_steps, /approve and /deny endpoints, 13 tests) |
+| 5054985 | fix: test_e2e_smoke uses dynamic port discovery via get_control_api_url() (replaces hardcoded 8765 with port scan 8765-8775 + env var respects) |
 
 ---
 
