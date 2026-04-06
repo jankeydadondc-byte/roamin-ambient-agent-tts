@@ -35,11 +35,10 @@ Write-Host "[Roamin] Log cleared" -ForegroundColor Gray
 Start-Process $pythonw -ArgumentList $script -WorkingDirectory $repoRoot -WindowStyle Hidden
 Write-Host "[Roamin] Launched. Waiting for warmup..." -ForegroundColor Green
 
-# Launch Control API (use python.exe not pythonw to capture output; will minimize window)
+# Launch Control API (use python.exe for visible output; keep window open for debugging)
 $python = "$repoRoot\.venv\Scripts\python.exe"
-$apiLog = "$repoRoot\logs\control_api.log"
-Start-Process $python -ArgumentList $apiScript -WorkingDirectory $repoRoot -WindowStyle Minimized -RedirectStandardOutput $apiLog -RedirectStandardError $apiLog
-Write-Host "[Control API] Launched (log: logs/control_api.log)" -ForegroundColor Green
+Start-Process $python -ArgumentList $apiScript -WorkingDirectory $repoRoot
+Write-Host "[Control API] Launched (window shown for debugging)" -ForegroundColor Green
 
 # Wait for "Ready" to appear in log (up to 120s)
 $timeout = 120
