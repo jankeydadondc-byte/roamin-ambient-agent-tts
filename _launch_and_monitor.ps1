@@ -12,7 +12,7 @@ $discoveryFile = "$repoRoot\.loom\control_api_port.json"
 
 Write-Host "[Roamin] Checking for existing instances..." -ForegroundColor Yellow
 
-# Kill all existing wake_listener and control_api processes
+# Kill all existing wake_listener processes (control_api is a child and terminates with it)
 $killed = 0
 Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -like "*run_wake_listener*" -or $_.CommandLine -like "*run_control_api*" } | ForEach-Object {
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
@@ -35,10 +35,7 @@ Write-Host "[Roamin] Log cleared" -ForegroundColor Gray
 Start-Process $pythonw -ArgumentList $script -WorkingDirectory $repoRoot -WindowStyle Hidden
 Write-Host "[Roamin] Launched. Waiting for warmup..." -ForegroundColor Green
 
-# Launch Control API (use python.exe for visible output; keep window open for debugging)
-$python = "$repoRoot\.venv\Scripts\python.exe"
-Start-Process $python -ArgumentList $apiScript -WorkingDirectory $repoRoot
-Write-Host "[Control API] Launched (window shown for debugging)" -ForegroundColor Green
+# Control API is now launched from within run_wake_listener.py itself (logs/control_api.log)
 
 # Wait for "Ready" to appear in log (up to 120s)
 $timeout = 120
@@ -63,7 +60,7 @@ if ($elapsed -ge $timeout) {
     Write-Host "[Roamin] WARNING: Timed out waiting for Ready" -ForegroundColor Red
 }
 
-# Check Control API readiness (should already be up by now)
+# Check Control API readiness via discovery file (written by the sidecar on startup)
 $apiElapsed = 0
 while ($apiElapsed -lt 15) {
     if (Test-Path $discoveryFile) {
@@ -75,7 +72,7 @@ while ($apiElapsed -lt 15) {
     $apiElapsed++
 }
 if ($apiElapsed -ge 15) {
-    Write-Host "[Control API] WARNING: Did not start within 15s" -ForegroundColor Yellow
+    Write-Host "[Control API] WARNING: Did not start within 15s (check logs/control_api.log)" -ForegroundColor Yellow
 }
 
 Write-Host ""

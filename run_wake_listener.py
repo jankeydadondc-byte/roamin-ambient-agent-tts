@@ -10,6 +10,7 @@ import atexit  # noqa: E402
 import logging  # noqa: E402
 import signal  # noqa: E402
 import socket  # noqa: E402
+import subprocess  # noqa: E402
 import sys  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
@@ -127,6 +128,26 @@ def _warmup(stt: SpeechToText, tts: TextToSpeech, agent_loop: AgentLoop) -> None
     print(f"[Roamin] Warmup complete in {time.perf_counter() - t0:.1f}s")
 
 
+def _start_control_api(log_dir: Path) -> subprocess.Popen | None:
+    """Launch the Control API as a sidecar subprocess. Returns the process or None."""
+    api_script = Path(__file__).parent / "run_control_api.py"
+    if not api_script.exists():
+        return None
+    api_log = open(log_dir / "control_api.log", "a", buffering=1, encoding="utf-8")  # noqa: SIM115
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, str(api_script)],
+            cwd=str(Path(__file__).parent),
+            stdout=api_log,
+            stderr=api_log,
+        )
+        atexit.register(proc.terminate)
+        return proc
+    except Exception as e:
+        print(f"[Control API] Failed to start: {e}", flush=True)
+        return None
+
+
 def main() -> None:
     """Main entry point with single-instance guard, warmup, and cleanup."""
     log_dir = LOCK_FILE.parent
@@ -188,6 +209,9 @@ def main() -> None:
 
     write_lock_file()
     atexit.register(remove_lock_file)
+
+    # Start Control API sidecar (non-blocking, logs to logs/control_api.log)
+    _start_control_api(log_dir)
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
