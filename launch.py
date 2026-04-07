@@ -59,6 +59,39 @@ def _kill_pid(pid: int, label: str = "") -> bool:
         return False
 
 
+def _pids_by_cmdline(patterns: list[str]) -> dict[int, str]:
+    """Return {pid: matched_pattern} for processes whose command line contains any pattern.
+
+    Uses ``wmic process`` which is available on all modern Windows.
+    """
+    found: dict[int, str] = {}
+    try:
+        result = subprocess.run(
+            ["wmic", "process", "get", "ProcessId,CommandLine", "/FORMAT:CSV"],
+            capture_output=True,
+            text=True,
+        )
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line or line.startswith("Node"):
+                continue
+            for pattern in patterns:
+                if pattern.lower() in line.lower():
+                    # CSV format: Node,CommandLine,ProcessId
+                    parts = line.rsplit(",", 1)
+                    if len(parts) == 2:
+                        try:
+                            pid = int(parts[-1].strip())
+                            if pid > 0:
+                                found[pid] = pattern
+                        except ValueError:
+                            pass
+                    break
+    except Exception:
+        pass
+    return found
+
+
 def _pids_on_ports(ports: range | list[int]) -> dict[int, int]:
     """Return {pid: port} for any process listening on the given ports.
 
@@ -130,6 +163,17 @@ def stop_stale_instances() -> bool:
             label = "Vite dev server" if port == VITE_PORT else f"Control API (port {port})"
             pids_to_kill[pid] = label
 
+    # Layer 4: Command-line scan — catch processes that don't listen on ports
+    # (e.g. wake listener blocks on keyboard.wait(), not a socket)
+    cmdline_patterns = ["run_wake_listener.py", "run_control_api.py"]
+    for pid, pattern in _pids_by_cmdline(cmdline_patterns).items():
+        if pid not in pids_to_kill and pid != os.getpid():
+            label = {
+                "run_wake_listener.py": "Roamin wake listener",
+                "run_control_api.py": "Control API",
+            }.get(pattern, pattern)
+            pids_to_kill[pid] = f"{label} (cmdline)"
+
     if not pids_to_kill:
         print("[Launcher] No stale instances found.\n")
         return False
@@ -181,8 +225,8 @@ def launch_all() -> None:
 
     print()
     print("[Launcher] All systems go!")
-    print(f"  Control Panel UI → http://127.0.0.1:{VITE_PORT}")
-    print("  Control API      → http://127.0.0.1:8765")
+    print(f"  Control Panel UI => http://127.0.0.1:{VITE_PORT}")
+    print("  Control API      => http://127.0.0.1:8765")
     print()
     print("[Launcher] Done. Two console windows are now open.")
     print("           Close them individually, or re-run launch.py to restart everything.")
