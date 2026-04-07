@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import socket
 import tempfile
@@ -22,6 +23,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from agent.core import paths, ports
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Roamin Control API (dev)")
 
@@ -154,10 +157,20 @@ async def _broadcast(event: dict[str, Any]) -> None:
 @app.websocket("/ws/events")
 async def websocket_events(ws: WebSocket) -> None:
     # If API key is configured, require it for websocket connections as well.
+    # Accept API key from either HTTP header (preferred) or query parameter (for WebSocket compatibility)
     key = os.environ.get("ROAMIN_CONTROL_API_KEY")
     if key:
-        provided = ws.headers.get("x-roamin-api-key")
+        # Try header first, then query param (for WebSocket compatibility)
+        provided = ws.headers.get("x-roamin-api-key") or ws.query_params.get("api_key")
+
+        if os.environ.get("ROAMIN_DEBUG"):
+            logger.info(
+                f"WebSocket auth: header={ws.headers.get('x-roamin-api-key')}, query={ws.query_params.get('api_key')}"
+            )
+
         if provided != key:
+            if os.environ.get("ROAMIN_DEBUG"):
+                logger.warning(f"WebSocket auth failed: expected {key}, got {provided}")
             await ws.close(code=1008)
             return
 
