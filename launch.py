@@ -23,6 +23,10 @@ LOCK_FILE = PROJECT_ROOT / "logs" / "_wake_listener.lock"
 DISCOVERY_FILE = PROJECT_ROOT / ".loom" / "control_api_port.json"
 UI_DIR = PROJECT_ROOT / "ui" / "control-panel"
 
+# Prefer the venv Python; fall back to whatever is running this script
+VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
+PYTHON = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
+
 VITE_PORT = 5173
 CONTROL_API_PORTS = range(8765, 8776)
 
@@ -52,7 +56,7 @@ def _kill_pid(pid: int, label: str = "") -> bool:
         if result.returncode == 0:
             print(f"  [killed] {label} (PID {pid})")
             return True
-        # Process may have already exited — not a failure
+        # Process may have already exited -- not a failure
         return False
     except Exception as e:
         print(f"  [warn]   Could not kill {label} (PID {pid}): {e}")
@@ -156,14 +160,14 @@ def stop_stale_instances() -> bool:
         except (ValueError, KeyError, IOError, json.JSONDecodeError):
             pass
 
-    # Layer 3: Port scan fallback — catch anything on our known ports
+    # Layer 3: Port scan fallback -- catch anything on our known ports
     scan_ports = list(CONTROL_API_PORTS) + [VITE_PORT]
     for pid, port in _pids_on_ports(scan_ports).items():
         if pid not in pids_to_kill:
             label = "Vite dev server" if port == VITE_PORT else f"Control API (port {port})"
             pids_to_kill[pid] = label
 
-    # Layer 4: Command-line scan — catch processes that don't listen on ports
+    # Layer 4: Command-line scan -- catch processes that don't listen on ports
     # (e.g. wake listener blocks on keyboard.wait(), not a socket)
     cmdline_patterns = ["run_wake_listener.py", "run_control_api.py"]
     for pid, pattern in _pids_by_cmdline(cmdline_patterns).items():
@@ -178,7 +182,7 @@ def stop_stale_instances() -> bool:
         print("[Launcher] No stale instances found.\n")
         return False
 
-    print(f"[Launcher] Found {len(pids_to_kill)} stale instance(s) — terminating:")
+    print(f"[Launcher] Found {len(pids_to_kill)} stale instance(s) -- terminating:")
     for pid, label in pids_to_kill.items():
         _kill_pid(pid, label)
 
@@ -207,9 +211,9 @@ def launch_all() -> None:
     flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)  # Windows only; no-op on other platforms
 
     # --- Roamin wake listener (spawns Control API as sidecar automatically) ---
-    print("[Launcher] Starting Roamin...")
+    print(f"[Launcher] Starting Roamin (using {Path(PYTHON).name})...")
     subprocess.Popen(
-        [sys.executable, str(PROJECT_ROOT / "run_wake_listener.py")],
+        [PYTHON, str(PROJECT_ROOT / "run_wake_listener.py")],
         cwd=str(PROJECT_ROOT),
         creationflags=flags,
     )
