@@ -132,7 +132,14 @@ export function connectEvents(onEvent) {
     return {
         close() {
             closed = true;
-            try { ws && ws.close(); } catch (e) { }
+            if (!ws) return;
+            if (ws.readyState === WebSocket.CONNECTING) {
+                // Defer close until connected to avoid browser-level error in React StrictMode.
+                // Calling close() on a CONNECTING socket logs a native browser error even with try/catch.
+                ws.onopen = () => { try { ws.close(); } catch (e) { } };
+            } else {
+                try { ws.close(); } catch (e) { }
+            }
         }
     };
 }
