@@ -5,6 +5,7 @@ __pycache__/
 *.pyo
 .venv/
 *.egg-info/
+.pytest_tmp/
 
 # Venv marker (recreate with setup instructions)
 roamin.pth
