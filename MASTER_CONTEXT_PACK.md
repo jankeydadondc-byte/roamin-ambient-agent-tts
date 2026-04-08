@@ -1,6 +1,6 @@
 # Roamin Ambient Agent — Master Context Pack
 
-# Updated: 2026-04-07 (Control Panel UI fully wired — toast system, WebSocket auth fix, StrictMode fix; unified launcher launch.py with 4-layer process detection)
+# Updated: 2026-04-07 (Control Panel UI fully wired — toast system, WebSocket auth fix, StrictMode fix; unified launcher launch.py with 4-layer process detection; plugin outlet infrastructure — RoaminPlugin protocol, auto-discovery, example_ping; dev comment protocol established; pytest temp-dir fix)
 
 # For: new Claude conversations to pick up where we left off
 
@@ -8,7 +8,7 @@
 
 # GitHub: jankeydadondc-byte/roamin-ambient-agent-tts (private)
 
-# Latest commit: 5c45dc1 — Fix WebSocket StrictMode console error in dev mode
+# Latest commit: 6abff1b — fix: resolve pytest temp-dir symlink permission error on Windows
 
 ---
 
@@ -51,6 +51,9 @@ C:\AI\roamin-ambient-agent-tts\
 │   └── Qwen3-VL-8B-Instruct-abliterated-v2.mmproj-Q8_0.gguf  (718MB — vision encoder)
 ├── agent/
 │   ├── control_api.py             # FastAPI Control API — REST + WebSocket event stream (accepts API key from header OR query param)
+│   ├── plugins/                   # Plugin outlet (drop .py here to add a plugin; _-prefix to disable)
+│   │   ├── __init__.py            # RoaminPlugin protocol, discover_plugins(), load_plugins(), unload_plugins()
+│   │   └── example_ping.py        # Reference plugin — registers 'ping' tool returning 'pong'
 │   └── core/
 │       ├── voice/
 │       │   ├── wake_listener.py   # Main orchestration: hotkey→STT→dispatch→LLM→TTS
@@ -61,7 +64,7 @@ C:\AI\roamin-ambient-agent-tts\
 │       ├── model_sync.py          # Filesystem GGUF discovery (LM Studio dirs + drive walk + Ollama blobs); runs at startup
 │       ├── model_config.json      # Routing rules, fallback chain, model endpoints; model_scan_dirs key; file_path on llama_cpp entries
 │       ├── ports.py               # Port constants + dynamic discovery (CONTROL_API_DEFAULT_PORT=8765, range 8765-8775)
-│       ├── agent_loop.py          # Plan + execute loop (cancellation, per-step timeouts)
+│       ├── agent_loop.py          # Plan + execute loop (cancellation, per-step timeouts); registry property for plugin DI
 │       ├── tools.py               # 28 tool implementations (input validation, structured errors)
 │       ├── tool_registry.py       # Tool plugin system wired to tools.py
 │       ├── memory/
@@ -451,7 +454,7 @@ VRAM budget (24GB RTX 3090):
 | 2 — Vision | ✅ COMPLETE | Image bytes pipeline, Qwen3-VL-8B, mmproj, vision fast-path |
 | 3 — Latency | ✅ COMPLETE | 3A (Whisper CUDA) ✅ 3B (streaming TTS) ✅ 3C (voice model select) ✅ 3.5 (model discovery) ✅ |
 | 4 — Task Robustness | ✅ COMPLETE | Task dedup (SHA-256 2s TTL), step prioritization (HIGH/MED/LOW sort), feature readiness checks (PIL/mmproj gates), tool fallback chains; 121/121 tests passing; committed 4399614 to main |
-| 5 — UX & Plugins | ✅ MOSTLY COMPLETE | Control API skeleton ✅ React SPA ✅ WebSocket live events ✅ Toast system ✅ Unified launcher ✅ Playwright E2E deferred (personal tool) |
+| 5 — UX & Plugins | ✅ MOSTLY COMPLETE | Control API skeleton ✅ React SPA ✅ WebSocket live events ✅ Toast system ✅ Unified launcher ✅ Plugin outlet infrastructure ✅ Playwright E2E deferred (personal tool) |
 | 6 — Toast Notifications & Task History | ✅ COMPLETE | Toasts (on_progress events), persistent task_runs/task_steps SQLite, HITL approval flow; Control Panel UI fully wired with WebSocket + toasts; 165/165 tests passing |
 | 7 — Security | Planned | API keys, LLM proxy, browser automation hardening |
 
@@ -470,6 +473,20 @@ VRAM budget (24GB RTX 3090):
 - WebSocket StrictMode fix: deferred close on CONNECTING socket avoids browser-level native error
 - Unified launcher: `python launch.py` — 4-layer stale process detection (lock file, discovery file, port scan, WMIC cmdline) + launches Roamin + Vite in separate console windows
 - Uses venv Python (.venv/Scripts/python.exe), not system Python
+
+**Plugin Outlet Infrastructure (2026-04-07, commit f813d6f):**
+
+- Plugin system "outlet" built — drop a `.py` in `agent/plugins/` and it auto-loads on restart
+- `RoaminPlugin` Protocol (PEP 544, `@runtime_checkable`): structural duck typing, no inheritance required
+- `discover_plugins()` — globs `*.py`, skips `_`-prefixed (disabled convention)
+- `load_plugins(registry)` — import → find `plugin` instance or `Plugin` class → `isinstance` check → `on_load(registry)` with full error isolation
+- `unload_plugins(plugins)` — best-effort `on_unload()` calls on shutdown (never crashes)
+- `example_ping.py` — reference plugin, registers `ping` tool returning `pong` (proves the outlet works)
+- Wired into `run_wake_listener.py`: loads after `AgentLoop()`, registers via `agent_loop.registry`, `atexit` unload
+- `AgentLoop.registry` property added for DI (explicit, no globals)
+- 10 tests in `tests/test_plugin_loader.py` — Protocol validation, discovery, load, error resilience, unload
+- **Dev Comment Protocol** established: one-liner above each logical code chunk, verb-first, ≤80 chars; all new code uses this pattern going forward
+- pytest temp-dir fix (commit 6abff1b): `addopts = --basetemp=.pytest_tmp`, `tmp_path_retention_policy = none` — avoids Windows symlink privilege error in system temp
 
 **Phase 4 fully complete & deployed to main (2026-04-04, commit 4399614):** All task execution robustness improvements tested, committed, and pushed:
 
@@ -545,6 +562,9 @@ VRAM budget (24GB RTX 3090):
 | 9ce7a2f | fix: launcher add 4th detection layer (WMIC cmdline scan) to catch wake listener process |
 | 25e96ec | fix: launcher use venv Python (.venv/Scripts/python.exe) and fix Windows cp1252 encoding |
 | 5c45dc1 | fix: WebSocket StrictMode console error — defer close on CONNECTING socket to avoid browser-level native error |
+| f813d6f | feat: plugin outlet infrastructure — RoaminPlugin protocol (@runtime_checkable), auto-discovery, load/unload lifecycle, example_ping plugin, startup wiring in run_wake_listener.py; AgentLoop.registry property; 10 tests; dev comment protocol established |
+| 6e339d0 | docs: fix Priority 4 status in context pack — COMPLETE (not NEXT/Planned) |
+| 6abff1b | fix: pytest temp-dir symlink permission error on Windows — addopts --basetemp=.pytest_tmp, tmp_path_retention_policy=none; .gitignore adds .pytest_tmp/ |
 
 ---
 
@@ -676,95 +696,77 @@ All Phase 3 items delivered:
 
 **Why fifth:** Enables future extensibility without breaking stability.
 
-**Planned enhancements:**
+**Status:** Plugin outlet (the "socket") is BUILT (commit f813d6f). Full sandboxing/lifecycle management is deferred until a real plugin is needed.
 
-#### 5.1 Plugin Isolation and Sandboxing
+#### ✅ Plugin Outlet (Built — 2026-04-07)
+
+The minimal foundation is in place. To add a plugin: drop a `.py` in `agent/plugins/`, write a class with `name`, `on_load(registry)`, `on_unload()`, restart. Zero config.
+
+- `agent/plugins/__init__.py` — `RoaminPlugin` Protocol + `discover_plugins()` + `load_plugins()` + `unload_plugins()`
+- `agent/plugins/example_ping.py` — reference plugin (registers `ping` tool)
+- OpenSpec: `openspec/changes/plugin-outlet-infrastructure/`
+
+#### 5.1 Plugin Isolation and Sandboxing (Deferred)
 
 - Run plugins in isolated environments (virtual threads with restricted access)
 - Prevents one bad plugin from crashing whole agent
-- Use Python's importlib or containerization (Docker) for stricter isolation
 - **Files:** agent/core/plugin_loader.py (new)
 - **Complexity:** MEDIUM-HIGH
 
-#### 5.2 Plugin Lifecycle Management
+#### 5.2 Plugin Lifecycle Management (Deferred)
 
-- Dynamic plugin loading/unloading
+- Dynamic plugin loading/unloading without restart
 - Plugin version compatibility checks
 - Plugin dependency resolution
-- **Files:** agent/core/plugin_loader.py
 - **Complexity:** MEDIUM
 
-#### 5.3 Plugin Discovery and Auto-Reloading
+#### 5.3 Plugin Discovery and Auto-Reloading (Deferred)
 
 - Auto-detect new/updated plugins without restart
-- HTTP-based plugin list provider (like N.E.K.O)
-- **Files:** agent/core/plugin_loader.py
 - **Complexity:** MEDIUM
 
-#### 5.4 Plugin Configuration Persistence
+#### 5.4 Plugin Configuration Persistence (Deferred)
 
 - Store plugin configs (API keys, settings) persistently
-- Allow dynamic modification
-- **Files:** agent/core/plugin_loader.py, agent/config/
 - **Complexity:** LOW
 
-#### 5.5 Plugin Security Basics
+#### 5.5 Plugin Security Basics (Deferred)
 
 - Restrict file operations in plugins to specific directories
-- Prevent access to sensitive system files/data
-- **Files:** agent/core/tool_registry.py, agent/core/plugin_loader.py
 - **Complexity:** LOW
 
 ---
 
-### Priority 6: USER EXPERIENCE ENHANCEMENTS
+### Priority 6: USER EXPERIENCE ENHANCEMENTS ✅ COMPLETE (2026-04-06, commit 218fbd0)
 
 **Why sixth:** After stability + core features work, improve user feedback.
 
-**Planned enhancements:**
+**Status:** All three core items shipped. 6.4 skipped (low value), 6.5 archived (already implemented).
 
-#### 6.1 Real-Time Task Progress Updates
+#### ✅ 6.1 Real-Time Task Progress Updates (COMPLETE)
 
-- Forward progress updates for long-running tasks
-- Current web search gives no indication it's working
-- Implement progress callback to speech synthesis or terminal
-- **Files:** agent/core/agent_loop.py, agent/core/voice/wake_listener.py
-- **Complexity:** LOW
+- `AgentLoop.run()` accepts optional `on_progress` callback — emits `planning`, `executing`, `step_start`, `step_done` events
+- `wake_listener._progress_handler` speaks TTS cues ("Let me think...", "Looking that up...")
+- Also broadcasts WebSocket progress events to Control Panel
 
-#### 6.2 Notification System
+#### ✅ 6.2 Modern Toast Notifications (COMPLETE)
 
-- Toast notifications for task completion/failures/important events
-- Currently rely solely on TTS replies (limited feedback)
-- Implement system tray notifications or desktop alerts
-- **Files:** agent/core/voice/tts.py (new notification layer)
-- **Complexity:** LOW
+- `winotify` replaces `WScript.Shell.Popup()` — non-blocking Windows 10/11 native toasts
+- Falls back to PowerShell if winotify unavailable
+- HITL approval flow: blocked steps fire Approve/Deny action-button toasts
 
-#### 6.3 Task History and Logging
+#### ✅ 6.3 Persistent Task History (COMPLETE)
 
-- Maintain history of executed tasks with timestamps, parameters, results
-- Critical for debugging complex workflows
-- Query history by date/status/keyword
-- **Files:** agent/core/memory/memory_manager.py, new history table
-- **Complexity:** MEDIUM
+- `task_runs` + `task_steps` SQLite tables in `memory_store.py`
+- `create_task_run()`, `add_task_step()`, `finish_task_run()`, `get_task_runs()`, `search_task_history()`
+- Control API: `GET /task-history` + `GET /task-history/{task_id}/steps`
+- Control Panel Task History tab queries live data
 
-#### 6.4 RoaminCP UI Integration
+#### 6.4 RoaminCP UI Integration — SKIPPED (Control Panel SPA covers this)
 
-- Current state: RoaminCP UI exists (Tauri + React, Monaco editor, xterm terminal, diff viewer)
-  - Location: C:\AI\os_agent\ui\roamin-control
-  - Not yet connected to ambient agent
-  - Control API still points at os_agent repo, not new repo
-- Solution: Wire RoaminCP to this repo's Control API, add websocket event streaming
-- Show task execution, memory recall, tool outputs in real-time
-- **Files:** agent/core/api.py (new), wiring to RoaminCP
-- **Complexity:** MEDIUM-HIGH
+#### 6.5 Cancel Hotkey — ARCHIVED (already implemented and stable)
 
-#### 6.5 Cancel/Stop Mid-Generation
-
-- ctrl+space again during thinking/generation to abort
-- Currently disabled (would be confused with wake key)
-- Implement timeout-based detection: if ctrl+space within 2s of first press, treat as abort signal
-- **Files:** agent/core/agent_loop.py, agent/core/voice/wake_listener.py
-- **Complexity:** MEDIUM
+OpenSpec: `openspec/changes/ux-experience-enhancements/` — all tasks checked off
 
 ---
 
