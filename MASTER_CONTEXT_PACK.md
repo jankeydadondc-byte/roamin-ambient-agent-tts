@@ -1,6 +1,6 @@
 # Roamin Ambient Agent — Master Context Pack
 
-# Updated: 2026-04-06 (Priority 6 fully complete — toasts, task progress, persistent history + HITL approval flow; 165/165 tests passing)
+# Updated: 2026-04-07 (Control Panel UI fully wired — toast system, WebSocket auth fix, StrictMode fix; unified launcher launch.py with 4-layer process detection)
 
 # For: new Claude conversations to pick up where we left off
 
@@ -8,7 +8,7 @@
 
 # GitHub: jankeydadondc-byte/roamin-ambient-agent-tts (private)
 
-# Latest commit: 5054985 — HITL approval flow + dynamic port discovery for e2e test (control API toasts, winotify Approve/Deny buttons, pending_approvals SQLite, ToolRegistry direct execution, test_e2e_smoke uses get_control_api_url(); 165/165 tests passing)
+# Latest commit: 5c45dc1 — Fix WebSocket StrictMode console error in dev mode
 
 ---
 
@@ -39,7 +39,9 @@ Roamin is an ambient AI assistant that runs silently in the background on Window
 ## REPO STRUCTURE
 
 C:\AI\roamin-ambient-agent-tts\
+├── launch.py                      # **Unified smart launcher** — kills stale instances (4-layer detection), launches everything
 ├── run_wake_listener.py           # Entry point, RUST_LOG=warn, lock guard, warmup, log pruning, TeeStream stdout/stderr tee to console+log
+├── run_control_api.py             # FastAPI/Uvicorn runner for Control API (spawned as sidecar by run_wake_listener.py)
 ├──_start_wake_listener.vbs       # Windows startup launcher (lock file + WMI dual guard)
 ├── _launch_and_monitor.ps1        # Kill dupes, clear log, launch, tail filtered log
 ├── CONSOLIDATED_PRIORITIES.md     # Unified roadmap (Priorities 1-7, phase-based)
@@ -48,6 +50,7 @@ C:\AI\roamin-ambient-agent-tts\
 │   ├── Qwen3-VL-8B-Instruct-abliterated-v2.Q4_K_M.gguf  (4.68GB — default model)
 │   └── Qwen3-VL-8B-Instruct-abliterated-v2.mmproj-Q8_0.gguf  (718MB — vision encoder)
 ├── agent/
+│   ├── control_api.py             # FastAPI Control API — REST + WebSocket event stream (accepts API key from header OR query param)
 │   └── core/
 │       ├── voice/
 │       │   ├── wake_listener.py   # Main orchestration: hotkey→STT→dispatch→LLM→TTS
@@ -57,6 +60,7 @@ C:\AI\roamin-ambient-agent-tts\
 │       ├── model_router.py        # Task→model routing; file_path dispatch → LlamaCppBackend, then HTTP fallback
 │       ├── model_sync.py          # Filesystem GGUF discovery (LM Studio dirs + drive walk + Ollama blobs); runs at startup
 │       ├── model_config.json      # Routing rules, fallback chain, model endpoints; model_scan_dirs key; file_path on llama_cpp entries
+│       ├── ports.py               # Port constants + dynamic discovery (CONTROL_API_DEFAULT_PORT=8765, range 8765-8775)
 │       ├── agent_loop.py          # Plan + execute loop (cancellation, per-step timeouts)
 │       ├── tools.py               # 28 tool implementations (input validation, structured errors)
 │       ├── tool_registry.py       # Tool plugin system wired to tools.py
@@ -66,9 +70,26 @@ C:\AI\roamin-ambient-agent-tts\
 │       │   └── memory_manager.py  # Unified interface
 │       ├── screen_observer.py     # PIL screenshot + HTTP vision API (HTTP path disabled — uses fast-path)
 │       └── context_builder.py     # Builds text context for AgentLoop
+├── ui/
+│   └── control-panel/             # React 18.2 + Vite 8 SPA — Control Panel UI
+│       ├── src/
+│       │   ├── main.jsx           # Entry point (React.StrictMode + ToastProvider wrapper)
+│       │   ├── App.jsx            # Main app — tabs, WebSocket live events, API status
+│       │   ├── apiClient.js       # API client — REST + WebSocket with reconnect + StrictMode-safe close
+│       │   ├── styles.css         # Global styles
+│       │   └── components/
+│       │       ├── Toast.jsx      # Context-based toast system (ToastProvider + useToast hook, auto-dismiss, WCAG AA)
+│       │       ├── ModelsSection.jsx  # TTS model selector dropdown
+│       │       ├── PluginsSection.jsx # Plugin management UI
+│       │       └── LogsPanel.jsx     # Real-time log viewer with auto-scroll
+│       ├── index.html
+│       └── package.json
 ├── logs/
 │   ├── wake_listener.log          # All stdout/stderr (auto-pruned 40KB max / 15KB tail)
+│   ├── control_api.log            # Control API/Uvicorn logs
 │   └── startup.log                # VBS startup events
+├── .loom/
+│   └── control_api_port.json      # Atomic discovery file {port, pid, started_at, version}
 └── .gitignore                     # Includes .claude/, workspace/, phrase_cache/, *.db
 
 ---
@@ -135,6 +156,28 @@ Startup folder: C:\Users\Asherre Roamin\AppData\Roaming\Microsoft\Windows\Start 
 | Roamin-Chatterbox.lnk | C:\AI\chatterbox-api\_start_silent.vbs | ✅ Active |
 | Roamin-ControlAPI.lnk | C:\AI\os_agent\_start_control_api.vbs | ✅ Fixed (native XMLHTTP) |
 | Roamin-WakeListener.lnk | C:\AI\roamin-ambient-agent-tts\_start_wake_listener.vbs | ✅ Active |
+
+### Unified Launcher (launch.py) — PREFERRED method for development
+
+Usage: `python launch.py`
+
+What it does:
+1. **Detect stale instances** via 4-layer detection (no psutil needed):
+   - Layer 1: Read `logs/_wake_listener.lock` → get PID → check alive
+   - Layer 2: Read `.loom/control_api_port.json` → get PID → check alive
+   - Layer 3: Port scan via `netstat` (ports 8765-8775 + 5173)
+   - Layer 4: WMIC command-line scan for `run_wake_listener.py` and `run_control_api.py`
+2. **Kill any found** via `taskkill /PID X /T /F` (full process tree)
+3. **Clean up** stale lock/discovery files
+4. **Launch both components** in separate console windows via `CREATE_NEW_CONSOLE`:
+   - `run_wake_listener.py` (spawns Control API as sidecar automatically)
+   - `npm run dev --host 127.0.0.1` in `ui/control-panel` (Vite dev server)
+5. **Exit** — the two console windows run independently
+
+Key details:
+- Uses `.venv/Scripts/python.exe` (not system Python) so all project deps are available
+- Idempotent: safe to re-run anytime; kills old instances before launching new ones
+- No psutil dependency — uses only stdlib + taskkill + netstat + wmic
 
 LM Studio plugin: permanently installed via `lms dev -i -y`
 Plugin location: C:\Users\Asherre Roamin\.lm-studio\plugins\roamin-python-tools\
@@ -335,6 +378,44 @@ Memory injection: ONLY inject facts whose fact_name appears in the query text
 
 ---
 
+## CONTROL PANEL UI (React SPA)
+
+Location: `ui/control-panel/` — React 18.2 + Vite 8, dev server at `http://127.0.0.1:5173`
+
+### Architecture
+- `main.jsx`: Entry point — wraps app in `<React.StrictMode>` + `<ToastProvider>`
+- `App.jsx`: Main app — tabbed UI (Status, Models, Plugins, Task History, Logs), single useEffect for API calls + WebSocket
+- `apiClient.js`: REST client + WebSocket event stream with exponential backoff reconnect
+  - REST: `getStatus()`, `getModels()`, `getPlugins()`, `getTaskHistory()` → Control API on 127.0.0.1:8765
+  - WebSocket: `connectEvents(onEvent)` → `ws://127.0.0.1:8765/ws/events` with auto-reconnect
+  - StrictMode-safe: deferred close on CONNECTING socket to avoid browser-level error
+
+### Components
+- `Toast.jsx`: Context-based system (ToastProvider default export + useToast named export)
+  - Types: success (green), error (red), warning (yellow), info (blue) — all WCAG AA compliant
+  - Auto-dismiss after 5s, Escape key to dismiss, stacking container bottom-right
+- `ModelsSection.jsx`: TTS model selector dropdown with expandable setup instructions
+- `PluginsSection.jsx`: Plugin management (install/uninstall, loading states, status badges)
+- `LogsPanel.jsx`: Real-time log viewer with level badges, auto-scroll, custom log entry form
+
+### WebSocket Event Flow
+1. `App.jsx` useEffect calls `connectEvents(callback)` on mount
+2. `apiClient.js` opens WebSocket to `ws://127.0.0.1:8765/ws/events?api_key=KEY`
+3. Control API accepts connection (API key from query param or header, commit cd69e6e)
+4. Server broadcasts `log_line` heartbeats every second + task/plugin events
+5. Client dispatches events to update task history, plugins, and log panels in real-time
+6. On disconnect: exponential backoff reconnect (500ms → 30s max)
+
+### Control API (agent/control_api.py)
+- FastAPI on 127.0.0.1:8765 (port range 8765-8775, atomic discovery file in `.loom/`)
+- CORS: allows localhost + 127.0.0.1 + wildcard
+- HTTP middleware: optional API key via `x-roamin-api-key` header
+- WebSocket: accepts API key from header OR query param (commit cd69e6e)
+- Endpoints: `/status`, `/models`, `/plugins`, `/task-history`, `/ws/events`, `/approve`, `/deny`, `/pending-approvals`
+- Background broadcaster: heartbeat events every 1 second to all connected WebSockets
+
+---
+
 ## TIMING PROFILE (measured 2026-04-04 — post-Phase-3-complete)
 
 | Phase | Observed | Notes |
@@ -370,8 +451,8 @@ VRAM budget (24GB RTX 3090):
 | 2 — Vision | ✅ COMPLETE | Image bytes pipeline, Qwen3-VL-8B, mmproj, vision fast-path |
 | 3 — Latency | ✅ COMPLETE | 3A (Whisper CUDA) ✅ 3B (streaming TTS) ✅ 3C (voice model select) ✅ 3.5 (model discovery) ✅ |
 | 4 — Task Robustness | ✅ DELIVERED & DEPLOYED | Task dedup (SHA-256 2s TTL), step prioritization (HIGH/MED/LOW sort), feature readiness checks (PIL/mmproj gates), tool fallback chains; 62/62 tests passing; committed 4399614 to main |
-| 5 — UX & Plugins | ⏳ PARTIAL | Control API skeleton ✅ React SPA ✅ Playwright E2E + a11y deferred (personal tool) |
-| 6 — Toast Notifications & Task History | ✅ COMPLETE | Toasts (on_progress events), persistent task_runs/task_steps SQLite, HITL approval flow (winotify Approve/Deny buttons, pending_approvals table, ToolRegistry direct execution); dynamic port discovery for e2e test; 165/165 tests passing; committed 5054985 to main |
+| 5 — UX & Plugins | ✅ MOSTLY COMPLETE | Control API skeleton ✅ React SPA ✅ WebSocket live events ✅ Toast system ✅ Unified launcher ✅ Playwright E2E deferred (personal tool) |
+| 6 — Toast Notifications & Task History | ✅ COMPLETE | Toasts (on_progress events), persistent task_runs/task_steps SQLite, HITL approval flow; Control Panel UI fully wired with WebSocket + toasts; 165/165 tests passing |
 | 7 — Security | Planned | API keys, LLM proxy, browser automation hardening |
 
 **Phase 3 fully complete (2026-04-04):** All latency + quality improvements delivered:
@@ -380,6 +461,15 @@ VRAM budget (24GB RTX 3090):
 - Think streaming: DeepSeek R1 think chain visible in terminal in real-time (cyan ANSI)
 - Think-tier: full-length replies (no 200-char cap), thorough system prompt, forced `<think>` tag
 - Capability routing: mmproj gated to vision queries only; think queries bypass AgentLoop entirely
+
+**Control Panel UI & Unified Launcher (2026-04-07, commits 6f9e200 through 5c45dc1):**
+
+- Toast system: context-based ToastProvider + useToast hook (auto-dismiss 5s, Escape key, WCAG AA)
+- New UI components: ModelsSection (TTS model selector), PluginsSection (plugin management), LogsPanel (real-time logs)
+- WebSocket auth fix: control_api.py accepts API key from both header AND query parameter
+- WebSocket StrictMode fix: deferred close on CONNECTING socket avoids browser-level native error
+- Unified launcher: `python launch.py` — 4-layer stale process detection (lock file, discovery file, port scan, WMIC cmdline) + launches Roamin + Vite in separate console windows
+- Uses venv Python (.venv/Scripts/python.exe), not system Python
 
 **Phase 4 fully complete & deployed to main (2026-04-04, commit 4399614):** All task execution robustness improvements tested, committed, and pushed:
 
@@ -449,6 +539,12 @@ VRAM budget (24GB RTX 3090):
 | (session 2026-04-06) | feat: Priority 6 complete — toast notifications for on_progress events, persistent task_runs/task_steps history, HITL approval flow (winotify Approve/Deny buttons, pending_approvals SQLite CRUD, ToolRegistry direct execution, wake_listener._handle_blocked_steps, Control API endpoints /approve/deny/pending-approvals); 13 tests; 164/165 passing |
 | af9b59c | feat: HITL approval flow — blocked steps persist and toast for Approve/Deny (pending_approvals table, _notify_approval_toast, _handle_blocked_steps, /approve and /deny endpoints, 13 tests) |
 | 5054985 | fix: test_e2e_smoke uses dynamic port discovery via get_control_api_url() (replaces hardcoded 8765 with port scan 8765-8775 + env var respects) |
+| 6f9e200 | fix: repair Toast system + add ModelsSection, PluginsSection, LogsPanel to control panel (context-based ToastProvider + useToast hook, WCAG AA colors, auto-dismiss) |
+| cd69e6e | fix: WebSocket auth protocol mismatch — server now accepts API key from both header (x-roamin-api-key) and query param (?api_key=KEY) for WebSocket compatibility |
+| 77c8fb8 | feat: unified smart launcher (launch.py) — single command to kill stale instances and launch everything |
+| 9ce7a2f | fix: launcher add 4th detection layer (WMIC cmdline scan) to catch wake listener process |
+| 25e96ec | fix: launcher use venv Python (.venv/Scripts/python.exe) and fix Windows cp1252 encoding |
+| 5c45dc1 | fix: WebSocket StrictMode console error — defer close on CONNECTING socket to avoid browser-level native error |
 
 ---
 
