@@ -450,7 +450,7 @@ VRAM budget (24GB RTX 3090):
 | 1.5 — Resilience | ✅ COMPLETE | Tool timeouts, HTTP retry, dispatch fallback, input validation |
 | 2 — Vision | ✅ COMPLETE | Image bytes pipeline, Qwen3-VL-8B, mmproj, vision fast-path |
 | 3 — Latency | ✅ COMPLETE | 3A (Whisper CUDA) ✅ 3B (streaming TTS) ✅ 3C (voice model select) ✅ 3.5 (model discovery) ✅ |
-| 4 — Task Robustness | ✅ DELIVERED & DEPLOYED | Task dedup (SHA-256 2s TTL), step prioritization (HIGH/MED/LOW sort), feature readiness checks (PIL/mmproj gates), tool fallback chains; 62/62 tests passing; committed 4399614 to main |
+| 4 — Task Robustness | ✅ COMPLETE | Task dedup (SHA-256 2s TTL), step prioritization (HIGH/MED/LOW sort), feature readiness checks (PIL/mmproj gates), tool fallback chains; 121/121 tests passing; committed 4399614 to main |
 | 5 — UX & Plugins | ✅ MOSTLY COMPLETE | Control API skeleton ✅ React SPA ✅ WebSocket live events ✅ Toast system ✅ Unified launcher ✅ Playwright E2E deferred (personal tool) |
 | 6 — Toast Notifications & Task History | ✅ COMPLETE | Toasts (on_progress events), persistent task_runs/task_steps SQLite, HITL approval flow; Control Panel UI fully wired with WebSocket + toasts; 165/165 tests passing |
 | 7 — Security | Planned | API keys, LLM proxy, browser automation hardening |
@@ -657,44 +657,18 @@ All Phase 3 items delivered:
 
 ---
 
-### Priority 4: TASK EXECUTION ROBUSTNESS (NEXT)
+### Priority 4: TASK EXECUTION ROBUSTNESS ✅ COMPLETE (2026-04-04, commit 90fa32c)
 
-**Why now:** Stability + latency complete. Handle edge cases in task queuing/execution.
+**Status:** All task execution robustness improvements tested, committed, and deployed.
 
-**Planned enhancements:**
+**Completed items:**
 
-#### 4.1 Task Deduplication
+- ✅ **4.1 Task Deduplication** — SHA-256 fingerprint with 2-second TTL window (no re-run on duplicate rapid presses)
+- ✅ **4.2 Dynamic Task Prioritization** — HIGH/MED/LOW 3-tier sort based on urgency keywords (notify before memory_write, stable order)
+- ✅ **4.3 Feature Readiness Checks** — PIL and mmproj pre-flight gates; fail gracefully before model load if dependencies missing
+- ✅ **4.4 Tool Fallback Chains** — web_search→fetch_url, memory_recall→memory_search (resilient queries)
 
-- Prevent redundant execution if same intent queued multiple times rapidly
-- Thread guard already blocks concurrent wake presses; AgentLoop has no dedup
-- Implementation: request fingerprint (hash of transcription + timestamp window)
-- Skip execution if identical request pending/executing
-- **Files:** agent/core/agent_loop.py
-- **Complexity:** LOW
-
-#### 4.2 Dynamic Task Prioritization
-
-- Priority-based queue system (high/medium/low)
-- Assign based on urgency keywords or user input
-- Weighted round-robin or priority heap scheduler
-- **Files:** agent/core/agent_loop.py
-- **Complexity:** MEDIUM
-
-#### 4.3 Feature Readiness Checks
-
-- Pre-flight validation for feature dependencies
-- Vision: PIL installed, mmproj file exists, model loaded
-- Graceful degradation if dependency missing
-- **Files:** agent/core/agent_loop.py, agent/core/llama_backend.py
-- **Complexity:** LOW
-
-#### 4.4 Plugin-Level Fallback Chains
-
-- If plugin A fails, automatically try plugin B
-- Currently: direct dispatch → AgentLoop fallback only
-- Missing: tool-to-tool fallback within AgentLoop
-- **Files:** agent/core/agent_loop.py, agent/core/tool_registry.py
-- **Complexity:** MEDIUM
+**Result:** 59 new tests; 121 total tests passing; all models + vision gates working; committed 4399614 (archive)
 
 ---
 
