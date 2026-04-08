@@ -165,9 +165,11 @@ Validators first because approval gates and audit logging both depend on clean v
 
 - [x] Run full test suite: `python -m pytest tests/ -v` -- 206/208 pass (2 pre-existing failures unrelated to security work)
 - [x] Run pre-commit hooks -- all pass
-- [ ] Manual: attempt `write_file` to `C:\Windows\System32\test.txt` -- rejected by validator
-- [ ] Manual: `run_python` triggers approval toast -- approve works, deny works (BLOCKED: approval gates not yet wired, task 6)
-- [ ] Manual: `logs/audit.jsonl` contains entries after tool execution
-- [ ] Manual: `GET /audit-log` returns data in Control Panel
-- [ ] Manual: `.env` file loaded at startup (add test key, verify in logs)
+- [x] Manual: `write_file` to `C:\Windows\test.txt` -- rejected with "outside allowed directories" (PASS)
+- [x] Manual: `read_file` on safe path -- succeeds and appears in audit.jsonl (PASS)
+- [x] Manual: `logs/audit.jsonl` contains entries with correct JSON structure (PASS)
+- [x] Manual: `GET /audit-log?limit=3` returns reverse-chronological JSON (PASS)
+- [x] Manual: `GET /audit-log?tool=write_file` filter returns only matching entries (PASS)
+- [ ] Manual: `run_python` triggers approval toast (BLOCKED: approval gates task 6 not yet wired)
+- [ ] Manual: `.env` file loaded at startup (test key verify in logs)
 - [ ] Update MASTER_CONTEXT_PACK.md with Phase 7 completion status
