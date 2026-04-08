@@ -193,6 +193,9 @@ class ModelRouter:
                 try:
                     response = requests.post(url, json=payload, timeout=5)
                     response.raise_for_status()
+                    # Guard against runaway responses from HTTP endpoints (256KB max)
+                    if len(response.content) > 256 * 1024:
+                        raise RuntimeError(f"Response too large ({len(response.content)} bytes, max 262144)")
                     data = response.json()
                     if messages is not None:
                         return data["choices"][0]["message"]["content"].strip()

@@ -28,6 +28,7 @@ ui/control-panel/node_modules/
 ui/control-panel/dist/
 
 # Secrets
+.env
 *.vault
 *.key
 .secrets.baseline

@@ -14,6 +14,8 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from agent.core.validators import validate_path
+
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -128,8 +130,10 @@ def _py_compile_check(params: dict) -> dict:
 
 def _read_file(params: dict) -> dict:
     path = params.get("path", "")
-    if not path:
-        return _fail("No path provided")
+    # Constrain reads to safe directories (project root, user home, temp)
+    rejected = validate_path(path, mode="read")
+    if rejected:
+        return rejected
     p = Path(path)
     if not p.exists():
         return _fail(f"File not found: {path}")
@@ -145,8 +149,10 @@ def _read_file(params: dict) -> dict:
 def _write_file(params: dict) -> dict:
     path = params.get("path", "")
     content = params.get("content", "")
-    if not path:
-        return _fail("No path provided")
+    # Constrain writes to project root and temp dirs only
+    rejected = validate_path(path, mode="write")
+    if rejected:
+        return rejected
     try:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -158,6 +164,10 @@ def _write_file(params: dict) -> dict:
 
 def _list_directory(params: dict) -> dict:
     path = params.get("path", str(_PROJECT_ROOT))
+    # Constrain directory listing to safe read roots
+    rejected = validate_path(path, mode="read")
+    if rejected:
+        return rejected
     p = Path(path)
     if not p.exists():
         return _fail(f"Directory not found: {path}")
@@ -173,6 +183,10 @@ def _list_directory(params: dict) -> dict:
 def _glob_files(params: dict) -> dict:
     pattern = params.get("pattern", "")
     path = params.get("path", str(_PROJECT_ROOT))
+    # Constrain glob root to safe read directories
+    rejected = validate_path(path, mode="read")
+    if rejected:
+        return rejected
     if not pattern:
         return _fail("No pattern provided")
     try:
@@ -187,6 +201,10 @@ def _glob_files(params: dict) -> dict:
 def _grep_files(params: dict) -> dict:
     pattern = params.get("pattern", "")
     path = params.get("path", str(_PROJECT_ROOT))
+    # Constrain grep root to safe read directories
+    rejected = validate_path(path, mode="read")
+    if rejected:
+        return rejected
     if not pattern:
         return _fail("No pattern provided")
     try:
@@ -223,6 +241,11 @@ def _move_file(params: dict) -> dict:
     dst = params.get("dst", "")
     if not src or not dst:
         return _fail("Both src and dst required")
+    # Constrain both source and destination to safe write directories
+    for p in (src, dst):
+        rejected = validate_path(p, mode="write")
+        if rejected:
+            return rejected
     if not Path(src).exists():
         return _fail(f"Source not found: {src}")
     try:
@@ -234,8 +257,10 @@ def _move_file(params: dict) -> dict:
 
 def _delete_file(params: dict) -> dict:
     path = params.get("path", "")
-    if not path:
-        return _fail("No path provided")
+    # Constrain deletes to safe write directories (project root, temp)
+    rejected = validate_path(path, mode="write")
+    if rejected:
+        return rejected
     p = Path(path)
     if not p.exists():
         return _fail(f"Not found: {path}")

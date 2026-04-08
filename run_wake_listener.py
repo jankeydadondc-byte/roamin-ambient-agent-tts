@@ -219,6 +219,12 @@ def main() -> None:
         except (OSError, ValueError):
             pass
 
+    # Load secrets from .env file before any component initialization
+    from agent.core.secrets import check_secrets, load_secrets
+
+    load_secrets()
+    check_secrets(optional=["ROAMIN_CONTROL_API_KEY", "ROAMIN_DEBUG"])
+
     # Pre-load all components ONCE — passed into WakeListener so _on_wake reuses them
     print("[Roamin] Loading components...")
 

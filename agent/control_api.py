@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from agent.core import paths, ports
+from agent.core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,8 @@ async def _api_key_middleware(request: Request, call_next):
     header `x-roamin-api-key` to match the value. This keeps tests and local
     development working when the env var is unset.
     """
-    key = os.environ.get("ROAMIN_CONTROL_API_KEY")
+    # Use centralized secrets loader for API key
+    key = get_secret("ROAMIN_CONTROL_API_KEY")
     if key:
         provided = request.headers.get("x-roamin-api-key")
         if provided != key:
@@ -158,7 +160,7 @@ async def _broadcast(event: dict[str, Any]) -> None:
 async def websocket_events(ws: WebSocket) -> None:
     # If API key is configured, require it for websocket connections as well.
     # Accept API key from either HTTP header (preferred) or query parameter (for WebSocket compatibility)
-    key = os.environ.get("ROAMIN_CONTROL_API_KEY")
+    key = get_secret("ROAMIN_CONTROL_API_KEY")
     if key:
         # Try header first, then query param (for WebSocket compatibility)
         provided = ws.headers.get("x-roamin-api-key") or ws.query_params.get("api_key")
@@ -400,6 +402,15 @@ async def deny_step(approval_id: int) -> HTMLResponse:
         return HTMLResponse(_CLOSE_HTML.format(msg="Step denied."))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/audit-log")
+async def get_audit_log(limit: int = 50, tool: str | None = None, since: str | None = None):
+    """Query the tool execution audit log (JSONL backend)."""
+    from agent.core import audit_log
+
+    entries = audit_log.query(limit=limit, tool_filter=tool, since=since)
+    return {"entries": entries, "count": len(entries)}
 
 
 @app.post("/actions/{action}")

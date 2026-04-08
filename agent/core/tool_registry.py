@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 
+from agent.core import audit_log
 from agent.core.tools import TOOL_IMPLEMENTATIONS
 
 logger = logging.getLogger(__name__)
@@ -232,20 +234,54 @@ class ToolRegistry:
             return {"success": False, "error": str(e)}
 
     def execute(self, name: str, params: dict) -> dict:
-        """Execute a tool by name. On failure, try configured fallback chain if any."""
+        """Execute a tool by name. On failure, try configured fallback chain if any.
+
+        Every execution (primary and fallback) is recorded in the audit log.
+        """
+        t0 = time.perf_counter()
         result = self._execute_single(name, params)
+        elapsed = (time.perf_counter() - t0) * 1000
+
         if result.get("success"):
+            # Log successful primary execution to audit trail
+            audit_log.append(
+                tool=name,
+                params=params,
+                success=True,
+                result_summary=str(result.get("result", ""))[:200],
+                duration_ms=elapsed,
+            )
             return result
 
+        # Primary failed — try fallback chain
         for fallback_name, adapter in _TOOL_FALLBACKS.get(name, []):
             adapted_params = adapter(params) if adapter is not None else params  # type: ignore[operator]
+            t1 = time.perf_counter()
             fb_result = self._execute_single(fallback_name, adapted_params)
+            fb_elapsed = (time.perf_counter() - t1) * 1000
             if fb_result.get("success"):
                 logger.info("Tool '%s' failed; fallback '%s' succeeded", name, fallback_name)
                 fb_result["fallback_used"] = fallback_name
+                # Log successful fallback to audit trail
+                audit_log.append(
+                    tool=f"{name}->{fallback_name}",
+                    params=adapted_params,
+                    success=True,
+                    result_summary=str(fb_result.get("result", ""))[:200],
+                    duration_ms=fb_elapsed,
+                )
                 return fb_result
             logger.debug("Fallback '%s' also failed: %s", fallback_name, fb_result.get("error"))
 
+        # All exhausted — log the failure
+        total_elapsed = (time.perf_counter() - t0) * 1000
+        audit_log.append(
+            tool=name,
+            params=params,
+            success=False,
+            result_summary=str(result.get("error", ""))[:200],
+            duration_ms=total_elapsed,
+        )
         return result  # all fallbacks exhausted — return original failure
 
     def format_for_prompt(self) -> str:
