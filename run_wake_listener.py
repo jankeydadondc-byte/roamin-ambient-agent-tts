@@ -232,6 +232,14 @@ def main() -> None:
     tts = TextToSpeech()
     agent_loop = AgentLoop()
 
+    # Load plugins from agent/plugins/ and register their tools into the agent loop
+    from agent.plugins import load_plugins, unload_plugins
+
+    loaded_plugins = load_plugins(agent_loop.registry)
+    if loaded_plugins:
+        print(f"[Roamin] {len(loaded_plugins)} plugin(s) loaded: {', '.join(p.name for p in loaded_plugins)}")
+    atexit.register(unload_plugins, loaded_plugins)
+
     # Warmup GPU + Chatterbox before registering hotkey
     _warmup(stt, tts, agent_loop)
 

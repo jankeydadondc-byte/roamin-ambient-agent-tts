@@ -36,6 +36,12 @@ class AgentLoop:
         self._registry = ToolRegistry()
         self._cancel_event = threading.Event()
 
+    # Expose tool registry for plugin loading at startup (read-only access)
+    @property
+    def registry(self) -> ToolRegistry:
+        """Return the tool registry so plugins can register tools at startup."""
+        return self._registry
+
     def cancel(self) -> None:
         """Signal the running run() to stop after the current step completes."""
         self._cancel_event.set()
