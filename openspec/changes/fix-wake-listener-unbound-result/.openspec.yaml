@@ -1,0 +1,10 @@
+id: fix-wake-listener-unbound-result
+title: Fix UnboundLocalError in wake_listener._on_wake() — result variable not initialized
+summary: |
+  The `result` variable is only initialized in the AgentLoop code path (when
+  `direct_result is None`), but it's accessed unconditionally at line 840 to
+  check for blocked_steps. Direct dispatch paths never set `result`, causing
+  an UnboundLocalError crash after reply generation.
+severity: critical
+category: [bug-fix, voice-interface]
+status: active

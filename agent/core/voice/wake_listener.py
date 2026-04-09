@@ -576,6 +576,7 @@ class WakeListener:
         t_dispatch = time.perf_counter()
 
         tool_context = ""
+        result = None  # Initialize before conditionals; overwritten by AgentLoop if used
         if direct_result is not None and direct_result.get("success"):
             print(f"[Roamin] t={t_dispatch - t0:.3f}s  Direct dispatch (+{t_dispatch - t_stt:.3f}s)")
 
