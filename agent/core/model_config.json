@@ -438,6 +438,21 @@
       "context_window": 32768,
       "always_available": false,
       "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\unsloth\\Kimi-K2.5-GGUF\\Kimi-K2.5-UD-TQ1_0-00005-of-00005.gguf"
+    },
+    {
+      "id": "kimi-k2-5-ud-tq1-0-00004-of-00005",
+      "name": "Kimi-K2.5-UD-TQ1_0-00004-of-00005",
+      "provider": "llama_cpp",
+      "model_id": "Kimi-K2.5-UD-TQ1_0-00004-of-00005",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\unsloth\\Kimi-K2.5-GGUF\\Kimi-K2.5-UD-TQ1_0-00004-of-00005.gguf"
     }
   ],
   "routing_rules": {
