@@ -91,7 +91,7 @@ Implementation order: 6.2 → 6.1 → 6.3
 
 - [x] Run full test suite: `python -m pytest tests/ -v` — 152/152 pass
 - [x] Run pre-commit hooks — all pass
-- [ ] Manual: toast notification appears in Action Center (6.2)
-- [ ] Manual: "Let me think..." spoken before planning (6.1)
-- [ ] Manual: step announcements for 3+ step plans (6.1)
-- [ ] Manual: task history queryable after execution (6.3)
+- [x] Manual: toast notification appears in Action Center (6.2) — verified 2026-04-08: winotify toast displayed correctly
+- [x] Manual: "Let me think..." spoken before planning (6.1) — verified 2026-04-08: 12 confirmed cache hits in log
+- [x] Manual: step announcements for 3+ step plans (6.1) — verified 2026-04-08: "Step N of M" heard on 3-step tasks
+- [x] Manual: task history queryable after execution (6.3) — verified 2026-04-08: 14 tasks in SQLite, steps retrievable via API

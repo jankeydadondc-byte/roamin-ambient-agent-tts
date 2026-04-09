@@ -1,0 +1,22 @@
+# MemPalace Integration Proposal
+version: 1
+created: 2026-04-08T15:30:00Z
+status: active
+phase: integration-planning
+
+# Phased implementation approach:
+# Phase 1 (Current): Plugin-only for LM Studio
+# Phase 2 (Future): Add standalone MCP server capability
+phases:
+  - name: "Phase 1 — Plugin-Only (Option A)"
+    description: "Register MemPalace tools in Roamin agent registry exclusively for LM Studio use"
+    target_audience: "LM Studio via plugin index.ts"
+    blocking_others: false
+
+  - name: "Phase 2 — Standalone MCP Capability (Option B)"
+    description: "Add MCP server process for Claude/Cursor standalone usage"
+    dependency: "Phase 1 must complete successfully first"
+    blocking_others: false
+
+# This proposal is designed to NEVER block future Option B implementation
+forward_compatible_with_option_b: true

@@ -34,5 +34,5 @@
 
 - [x] 6.1 Run `python -m pytest tests/test_tts_streaming.py -v` — all tests pass
 - [x] 6.2 Run `python -m flake8 agent/core/voice/tts.py agent/core/voice/wake_listener.py` — no new lint errors
-- [ ] 6.3 Manual smoke test: start the agent with Chatterbox running, say a multi-sentence query — verify first sentence plays immediately after synthesis, second sentence follows without gap
-- [ ] 6.4 Manual fallback test: stop Chatterbox, trigger a reply — verify SAPI speaks each sentence without error
+- [x] 6.3 Manual smoke test: start the agent with Chatterbox running, say a multi-sentence query — verify first sentence plays immediately after synthesis, second sentence follows without gap (verified 2026-04-08: 3-sentence reply streamed, 14.2s total, status=completed)
+- [x] 6.4 Manual fallback test: stop Chatterbox, trigger a reply — verify SAPI speaks each sentence without error (verified 2026-04-08: robot voice confirmed, fallback path executed; known pyttsx3 side-effects: window focus steal, mic echo — inherent to SAPI, not a code bug)

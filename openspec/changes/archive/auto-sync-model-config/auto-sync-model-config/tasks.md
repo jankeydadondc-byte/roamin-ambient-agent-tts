@@ -23,6 +23,6 @@
 ## 4. Verify
 
 - [x] 4.1 Run `python -m pytest tests/test_model_sync.py -v` — all tests pass
-- [ ] 4.2 Start Roamin and check startup log for `"model_sync: N new model(s) added"` line
-- [ ] 4.3 Open `agent/core/model_config.json` and confirm any LM Studio/Ollama models not previously listed are now present with correct provider/endpoint/capabilities fields
-- [ ] 4.4 Restart Roamin a second time and confirm no duplicate entries appear and the log shows `"0 new model(s) added"`
+- [x] 4.2 Start Roamin and check startup log for `"model_sync: N new model(s) added"` line (fixed: changed logger.info → print() so line is visible in terminal/log)
+- [x] 4.3 Open `agent/core/model_config.json` and confirm any LM Studio/Ollama models not previously listed are now present with correct provider/endpoint/capabilities fields (24 models total, 18 auto-added)
+- [x] 4.4 Restart Roamin a second time and confirm no duplicate entries appear and the log shows `"0 new model(s) added"` (verified: count stayed at 24 after restart)

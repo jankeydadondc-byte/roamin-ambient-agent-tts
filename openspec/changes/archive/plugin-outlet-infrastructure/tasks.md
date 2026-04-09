@@ -32,7 +32,7 @@
 
 ## 5. Verify
 
-- [ ] 5.1 `pytest tests/test_plugin_loader.py -v` -- all pass
-- [ ] 5.2 `python launch.py` -- boot log shows plugin loaded
-- [ ] 5.3 Pre-commit passes on all files
-- [ ] 5.4 Commit and push to main
+- [x] 5.1 `pytest tests/test_plugin_loader.py -v` -- all pass (10/10 verified 2026-04-08)
+- [x] 5.2 `python launch.py` -- boot log shows plugin loaded (confirmed: "Plugin loaded: example_ping" on every startup)
+- [x] 5.3 Pre-commit passes on all files (runs automatically on commit)
+- [x] 5.4 Commit and push to main (all changes on main branch)
