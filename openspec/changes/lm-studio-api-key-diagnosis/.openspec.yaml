@@ -1,0 +1,9 @@
+id: lm-studio-api-key-diagnosis
+title: "Diagnose & fix: LM Studio API key set globally but not working"
+summary: |
+  User set LM_API_TOKEN as a Windows User environment variable but LM Studio
+  API calls from Roamin fail. Root cause: model_router.py never reads or sends
+  any API key / Bearer token in its HTTP requests to LM Studio.
+severity: medium
+category: [bug-fix, integration]
+status: active

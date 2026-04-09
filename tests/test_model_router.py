@@ -148,3 +148,45 @@ class TestHttpFallbackSizeLimit:
         error_msg = str(exc_info.value)
         assert "262145" in error_msg
         assert "max 262144" in error_msg
+
+
+class TestAuthHeaders:
+    """Verify _auth_headers attaches Bearer tokens correctly."""
+
+    def test_no_token_no_auth_header(self, router, monkeypatch):
+        """Without LM_API_TOKEN, no Authorization header is sent."""
+        monkeypatch.delenv("LM_API_TOKEN", raising=False)
+        headers = router._auth_headers("default")
+        assert "Authorization" not in headers
+        assert headers["Content-Type"] == "application/json"
+
+    def test_global_lm_api_token(self, router, monkeypatch):
+        """LM_API_TOKEN env var attaches as Bearer token."""
+        monkeypatch.setenv("LM_API_TOKEN", "sk-lm-test-123")
+        headers = router._auth_headers("default")
+        assert headers["Authorization"] == "Bearer sk-lm-test-123"
+
+    def test_per_model_api_key_env(self, router, monkeypatch):
+        """Per-model api_key_env overrides global LM_API_TOKEN."""
+        monkeypatch.setenv("LM_API_TOKEN", "sk-global-fallback")
+        monkeypatch.setenv("CUSTOM_KEY", "sk-custom-per-model")
+        # Patch a model to have api_key_env pointing to CUSTOM_KEY
+        with patch.object(
+            router,
+            "select",
+            return_value={"api_key_env": "CUSTOM_KEY", "endpoint": "http://127.0.0.1:1234"},
+        ):
+            headers = router._auth_headers("default")
+        assert headers["Authorization"] == "Bearer sk-custom-per-model"
+
+    def test_per_model_env_var_missing_falls_back_to_global(self, router, monkeypatch):
+        """If per-model env var is not set, falls back to LM_API_TOKEN."""
+        monkeypatch.setenv("LM_API_TOKEN", "sk-global-fallback")
+        monkeypatch.delenv("MISSING_KEY", raising=False)
+        with patch.object(
+            router,
+            "select",
+            return_value={"api_key_env": "MISSING_KEY", "endpoint": "http://127.0.0.1:1234"},
+        ):
+            headers = router._auth_headers("default")
+        assert headers["Authorization"] == "Bearer sk-global-fallback"

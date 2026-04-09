@@ -252,7 +252,7 @@ def main() -> None:
     from agent.core.secrets import check_secrets, load_secrets
 
     load_secrets()
-    check_secrets(optional=["ROAMIN_CONTROL_API_KEY", "ROAMIN_DEBUG"])
+    check_secrets(optional=["ROAMIN_CONTROL_API_KEY", "ROAMIN_DEBUG", "LM_API_TOKEN"])
 
     # Pre-load all components ONCE — passed into WakeListener so _on_wake reuses them
     print("[Roamin] Loading components...")

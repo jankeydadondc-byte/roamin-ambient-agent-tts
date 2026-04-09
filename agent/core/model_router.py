@@ -4,6 +4,7 @@ model_router.py — Routes tasks to the appropriate local model.
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -71,6 +72,33 @@ class ModelRouter:
     def available_tasks(self) -> list[str]:
         """Return all routable task types."""
         return list(self._rules.keys())
+
+    def _auth_headers(self, task: str) -> dict[str, str]:
+        """Build HTTP headers for a task's endpoint, including Bearer auth if configured.
+
+        Resolution order:
+        1. Per-model ``api_key_env`` field in model_config.json → reads that env var
+        2. Global ``LM_API_TOKEN`` env var → fallback for any endpoint
+        3. No key found → no Authorization header (backward compatible)
+        """
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+
+        # Per-model override: model_config entry can specify which env var holds the key
+        selected = self.select(task)
+        if selected:
+            env_var = selected.get("api_key_env")
+            if env_var:
+                key = os.environ.get(env_var)
+                if key:
+                    headers["Authorization"] = f"Bearer {key}"
+                    return headers
+
+        # Global fallback: LM_API_TOKEN covers the common LM Studio case
+        global_key = os.environ.get("LM_API_TOKEN")
+        if global_key:
+            headers["Authorization"] = f"Bearer {global_key}"
+
+        return headers
 
     def respond(
         self,
@@ -165,6 +193,7 @@ class ModelRouter:
             import requests
 
             endpoint = self.endpoint(task).rstrip("/")
+            headers = self._auth_headers(task)
 
             if messages is not None:
                 # Chat completion API (LM Studio style)
@@ -187,11 +216,14 @@ class ModelRouter:
                     "stream": False,
                 }
 
+            if "Authorization" in headers:
+                logger.debug("HTTP fallback: Bearer token attached for task '%s'", task)
+
             max_retries = 2
             last_error: Exception | None = None
             for attempt in range(max_retries + 1):
                 try:
-                    response = requests.post(url, json=payload, timeout=5)
+                    response = requests.post(url, json=payload, headers=headers, timeout=5)
                     response.raise_for_status()
                     # Guard against runaway responses from HTTP endpoints (256KB max)
                     if len(response.content) > 256 * 1024:
