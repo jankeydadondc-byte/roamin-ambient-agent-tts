@@ -1,6 +1,6 @@
 # Roamin Ambient Agent — Master Context Pack
 
-# Updated: 2026-04-07 (Control Panel UI fully wired — toast system, WebSocket auth fix, StrictMode fix; unified launcher launch.py with 4-layer process detection; plugin outlet infrastructure — RoaminPlugin protocol, auto-discovery, example_ping; dev comment protocol established; pytest temp-dir fix)
+# Updated: 2026-04-09 (Priority 7 security hardening complete; MemPalace semantic memory integrated as plugin; UnboundLocalError + direct dispatch routing bugs fixed; Priority 8 performance & scalability complete — async utils, resource monitor, task cleanup; all committed and pushed to main)
 
 # For: new Claude conversations to pick up where we left off
 
@@ -8,7 +8,7 @@
 
 # GitHub: jankeydadondc-byte/roamin-ambient-agent-tts (private)
 
-# Latest commit: 6abff1b — fix: resolve pytest temp-dir symlink permission error on Windows
+# Latest commit: 2418cfa — feat: Priority 8 — async utils, resource monitor, task cleanup
 
 ---
 
@@ -53,7 +53,8 @@ C:\AI\roamin-ambient-agent-tts\
 │   ├── control_api.py             # FastAPI Control API — REST + WebSocket event stream (accepts API key from header OR query param)
 │   ├── plugins/                   # Plugin outlet (drop .py here to add a plugin; _-prefix to disable)
 │   │   ├── __init__.py            # RoaminPlugin protocol, discover_plugins(), load_plugins(), unload_plugins()
-│   │   └── example_ping.py        # Reference plugin — registers 'ping' tool returning 'pong'
+│   │   ├── example_ping.py        # Reference plugin — registers 'ping' tool returning 'pong'
+│   │   └── mempalace.py           # MemPalace plugin — registers mempalace_search + mempalace_status tools
 │   └── core/
 │       ├── voice/
 │       │   ├── wake_listener.py   # Main orchestration: hotkey→STT→dispatch→LLM→TTS
@@ -64,15 +65,19 @@ C:\AI\roamin-ambient-agent-tts\
 │       ├── model_sync.py          # Filesystem GGUF discovery (LM Studio dirs + drive walk + Ollama blobs); runs at startup
 │       ├── model_config.json      # Routing rules, fallback chain, model endpoints; model_scan_dirs key; file_path on llama_cpp entries
 │       ├── ports.py               # Port constants + dynamic discovery (CONTROL_API_DEFAULT_PORT=8765, range 8765-8775)
-│       ├── agent_loop.py          # Plan + execute loop (cancellation, per-step timeouts); registry property for plugin DI
+│       ├── agent_loop.py          # Plan + execute loop; _should_throttle(); _cleanup_completed_tasks(); registry property for plugin DI
+│       ├── async_utils.py         # AsyncRetryError, async_retry() exponential backoff, async_web_search() executor wrapper
+│       ├── resource_monitor.py    # CPU/RAM/VRAM monitoring via psutil + nvidia-smi; get_throttle_status() for /health
 │       ├── tools.py               # 28 tool implementations (input validation, structured errors)
-│       ├── tool_registry.py       # Tool plugin system wired to tools.py
+│       ├── tool_registry.py       # Tool plugin system; approval gates; audit log; response size limit
+│       ├── audit_log.py           # JSONL audit trail for all tool executions
+│       ├── secrets.py             # Environment-based secrets loader (ROAMIN_CONTROL_API_KEY, ROAMIN_DEBUG)
 │       ├── memory/
-│       │   ├── memory_store.py    # SQLite CRUD + get_all_named_facts
+│       │   ├── memory_store.py    # SQLite CRUD + get_all_named_facts + task_runs/task_steps
 │       │   ├── memory_search.py   # ChromaDB semantic search
 │       │   └── memory_manager.py  # Unified interface
 │       ├── screen_observer.py     # PIL screenshot + HTTP vision API (HTTP path disabled — uses fast-path)
-│       └── context_builder.py     # Builds text context for AgentLoop
+│       └── context_builder.py     # Builds text context for AgentLoop; accepts registry param (plugin tools visible to planner)
 ├── ui/
 │   └── control-panel/             # React 18.2 + Vite 8 SPA — Control Panel UI
 │       ├── src/
@@ -307,6 +312,8 @@ Layer 1 — bypasses AgentLoop entirely for common voice patterns:
 
 | Pattern | Tool called |
 |---|---|
+| "search my memories for X", "search memories for X", "search the palace for X", "mempalace search X", "mem palace search X" | mempalace_search(query) — checked BEFORE web_search patterns |
+| "palace status", "mempalace status", "what's in the palace", "what is in the palace", "show me the palace", "palace contents", "what's stored in the palace" | mempalace_status() |
 | "web search for X", "web search X", "do a search for X", "search the word X", regex `\bsearch\b` catch-all, "search for X", "look up X", "google X", "find out X" | web_search(query) — AgentLoop safety net also forces web_search if tool_outputs empty + "search" in query |
 | Weather/news regex patterns | web_search(transcription) |
 | 10 screen regex patterns (see below) | take_screenshot() → **vision fast-path** |
@@ -378,6 +385,40 @@ Tables: conversation_history, named_facts, actions_taken, observations, user_pat
 
 Fact extraction triggers: "remember my X is Y", "my X is Y", "save/note that my X is Y"
 Memory injection: ONLY inject facts whose fact_name appears in the query text
+
+---
+
+## MEMPALACE SEMANTIC MEMORY (plugin — 2026-04-09)
+
+MemPalace is a code-indexed semantic memory system. The palace is stored at `mem_palace_data/` (gitignored) and contains 1590 "drawers" — chunked, embedded snippets of all project code and docs.
+
+### Setup
+
+- Initialized: `mempalace init <project_dir> --palace mem_palace_data/`
+- Mined: `mempalace mine <project_dir>` — indexed 172 files, 1590 drawers
+- Backend: ChromaDB 1.5.5 (chromadb 0.6.x broken on Python 3.14; 1.5.5 used as workaround)
+- Organized by wing (`roamin_ambient_agent_tts`) and rooms (`agent`, `openspec`, `testing`, `frontend`, etc.)
+
+### Plugin (`agent/plugins/mempalace.py`)
+
+- `mempalace_status` tool — calls `mempalace --palace <path> status` CLI, returns stats
+- `mempalace_search` tool — calls `search_memories(query, palace_path, n_results=5)` from `mempalace.searcher`
+- Both return `{"success": True, "result": "<string>"}` matching standard tool format
+- Mode controlled by `ROAMIN_MEMPALACE_MODE` env var: `plugin` (default), `standalone`, `auto`
+
+### Key Architecture Fixes Required for Plugins to Work
+
+Three bugs were fixed so plugin tools are actually callable by direct dispatch and AgentLoop:
+
+1. ✅ **Direct dispatch uses `agent_loop.registry`** (not fresh `ToolRegistry()`) — plugins loaded here
+2. ✅ **ContextBuilder accepts `registry` param** — AgentLoop passes `self._registry` so planner sees plugin tools
+3. ✅ **MemPalace patterns before `\bsearch\b`** in `_try_direct_dispatch` — prevents "search my memories" routing to web_search
+
+### Voice Interface
+
+- `"Search my memories for X"` → `mempalace_search('X')` → semantic results spoken
+- `"What's in the palace?"` / `"Palace status"` → `mempalace_status()` → "1590 drawers, organized across rooms like agent, openspec..."
+- Both verified working via voice testing (2026-04-09)
 
 ---
 
@@ -456,7 +497,9 @@ VRAM budget (24GB RTX 3090):
 | 4 — Task Robustness | ✅ COMPLETE | Task dedup (SHA-256 2s TTL), step prioritization (HIGH/MED/LOW sort), feature readiness checks (PIL/mmproj gates), tool fallback chains; 121/121 tests passing; committed 4399614 to main |
 | 5 — UX & Plugins | ✅ MOSTLY COMPLETE | Control API skeleton ✅ React SPA ✅ WebSocket live events ✅ Toast system ✅ Unified launcher ✅ Plugin outlet infrastructure ✅ Playwright E2E deferred (personal tool) |
 | 6 — Toast Notifications & Task History | ✅ COMPLETE | Toasts (on_progress events), persistent task_runs/task_steps SQLite, HITL approval flow; Control Panel UI fully wired with WebSocket + toasts; 165/165 tests passing |
-| 7 — Security | Planned | API keys, LLM proxy, browser automation hardening |
+| 7 — Security | ✅ COMPLETE | Path validators, secrets loader (ROAMIN_CONTROL_API_KEY), audit log (JSONL), response size limits, approval gates for HIGH-risk tools; committed 2b99f96 + 6dfedde to main |
+| MemPalace Integration | ✅ COMPLETE | Semantic memory plugin (1590 drawers), mempalace_search + mempalace_status tools, direct dispatch routing, AgentLoop planner visibility; committed + pushed to main |
+| 8 — Performance & Scalability | ✅ COMPLETE | async_utils.py (AsyncRetryError, async_retry, async_web_search), resource_monitor.py (CPU/RAM/VRAM + throttle), task cleanup (24h retention, 5-min scheduled), GET /health endpoint; 13 tests; committed 2418cfa to main |
 
 **Phase 3 fully complete (2026-04-04):** All latency + quality improvements delivered:
 
@@ -565,6 +608,14 @@ VRAM budget (24GB RTX 3090):
 | f813d6f | feat: plugin outlet infrastructure — RoaminPlugin protocol (@runtime_checkable), auto-discovery, load/unload lifecycle, example_ping plugin, startup wiring in run_wake_listener.py; AgentLoop.registry property; 10 tests; dev comment protocol established |
 | 6e339d0 | docs: fix Priority 4 status in context pack — COMPLETE (not NEXT/Planned) |
 | 6abff1b | fix: pytest temp-dir symlink permission error on Windows — addopts --basetemp=.pytest_tmp, tmp_path_retention_policy=none; .gitignore adds .pytest_tmp/ |
+| 2b99f96 | feat: Priority 7 security hardening — path validators, secrets loader, audit log (JSONL), response size limits |
+| 6dfedde | test: response size limit tests + fix brittle model count assertion |
+| 8b23581 | fix: UnboundLocalError in wake_listener._on_wake() — initialize `result = None` before conditionals (direct dispatch path never set it) |
+| 11043e2 | fix: mempalace tools invisible to direct dispatch and AgentLoop planner — use agent_loop.registry for dispatch; pass registry to ContextBuilder; add mempalace patterns before web_search |
+| a5a013a | fix: mempalace tools return 'result' key to match standard tool response format (was 'output' / raw dict) |
+| d716cf2 | docs: archive fix-wake-listener-unbound-result openspec — all tasks complete |
+| 1a15494 | feat: mempalace integration + security hardening — remaining tracked changes (plugin, requirements, .gitignore, test files) |
+| 2418cfa | feat: Priority 8 — async utils, resource monitor, task cleanup; 13 unit tests; GET /health + POST /actions/cleanup-tasks endpoints; pushed to main |
 
 ---
 
@@ -770,81 +821,72 @@ OpenSpec: `openspec/changes/ux-experience-enhancements/` — all tasks checked o
 
 ---
 
-### Priority 7: SECURITY & INTEGRATION HARDENING
+### Priority 7: SECURITY & INTEGRATION HARDENING ✅ COMPLETE (2026-04-09, commits 2b99f96 + 6dfedde + 1a15494)
 
-**Why seventh:** Once everything else works well, harden for production.
+**Status:** Core security hardening shipped. Browser automation deferred.
 
-**Planned enhancements:**
+#### ✅ 7.1 API Key Management
 
-#### 7.1 API Key Management
+- `agent/core/secrets.py` — env-var secrets loader (`ROAMIN_CONTROL_API_KEY`, `ROAMIN_DEBUG`)
+- Graceful degradation when secrets not set (feature-limited, not crashed)
 
-- Secure management of credentials via environment variables/secrets manager
-- Currently avoid hardcoded values but no central system
-- Use Python's keyring or .env with encryption
-- **Files:** agent/core/config.py
-- **Complexity:** LOW
+#### ✅ 7.2 Approval Gates for HIGH-Risk Tools
 
-#### 7.2 LLM Proxy Layer
+- `approve_before_execution()` in `tool_registry.py` — blocks HIGH-risk tool calls pending user approval
+- Fires winotify toast with Approve/Deny buttons; polls SQLite for resolution (60s timeout)
+- LOW/MED risk tools auto-approved; audit log records all executions
 
-- Normalize responses from different LLM providers (OpenAI, Gemini, Ollama, llama.cpp)
-- Handle API differences, rate limits, token counting
-- Current model routing is internal, not provider-agnostic
-- **Files:** agent/core/model_router.py (refactor)
-- **Complexity:** MEDIUM
+#### ✅ 7.3 Audit Log
 
-#### 7.3 Browser Automation
+- `agent/core/audit_log.py` — JSONL append-only trail for every tool execution
+- `GET /audit-log` Control API endpoint (filterable by tool name + since timestamp)
 
-- Integrate Selenium/Playwright for web interactions
-- Currently only have web_search, no browser control
-- Enable "click on X", "fill form Y", "scroll page" commands
-- **Files:** agent/core/tools.py (new browser tools)
-- **Complexity:** MEDIUM-HIGH
+#### ✅ 7.4 Response Size Limits
 
-#### 7.4 Input Validation & Injection Prevention
+- Tool responses capped before injection into LLM context (prevents prompt stuffing)
+- Tests: `tests/test_model_router.py` response size limit assertions
 
-- Already done for most tools (URL scheme, control chars, size limits)
-- Audit remaining tools for SQL injection, command injection, XSS
-- **Files:** agent/core/tools.py (audit + hardening)
-- **Complexity:** MEDIUM
+#### 7.5 Browser Automation — Deferred
+
+- Selenium/Playwright integration for "click on X", "fill form Y" commands
+- Deferred: scope too large relative to current usage patterns
 
 ---
 
-### Priority 8: PERFORMANCE & SCALABILITY (FUTURE)
+### Priority 8: PERFORMANCE & SCALABILITY ✅ COMPLETE (2026-04-09, commit 2418cfa — pushed to main)
 
-**Why eighth:** Once all else stable, optimize for resource efficiency.
+**Status:** All three milestones implemented, tested, and verified.
 
-**Planned enhancements:**
+#### ✅ 8.1 Asynchronous Task Execution (`agent/core/async_utils.py`)
 
-#### 8.1 Asynchronous Task Execution
+- `AsyncRetryError` — raised when retry limit exhausted
+- `async_retry(func, *args, max_retries=2, delay=1.0)` — exponential backoff (1s, 2s)
+- `async_web_search(query, timeout=30)` — non-blocking DuckDuckGo via `loop.run_in_executor()`
+- Feature-flagged: `ROAMIN_USE_ASYNC=1` enables throttle checks in `_execute_step` (default off)
+- 4 unit tests: retry success, flaky (recovers on 2nd attempt), exhausted, timeout
 
-- Leverage Python's asyncio for I/O-bound operations
-- Currently blocking calls can freeze agent during web searches or large file reads
-- Non-blocking task execution for parallel operations
-- **Files:** agent/core/agent_loop.py (refactor to asyncio)
-- **Complexity:** MEDIUM-HIGH
+#### ✅ 8.2 Resource Monitoring & Throttling (`agent/core/resource_monitor.py`)
 
-#### 8.2 Resource Monitoring & Throttling
+- `get_cpu_percent(interval=0.5)` — psutil CPU %
+- `get_ram_usage_mb()` — psutil RAM in MB
+- `get_vram_usage_mb()` — nvidia-smi VRAM in MB (None if no GPU)
+- `is_resource_exhausted(threshold_cpu=90, threshold_ram_mb=16000, threshold_vram_mb=20000)` — fail-open on monitoring error
+- `get_throttle_status()` — dict for `/health` endpoint
+- `AgentLoop._should_throttle()` — wrapper, never blocks on monitoring failure
+- `GET /health` — returns `{cpu_percent, ram_mb, vram_mb, throttled, timestamp}`
+- **Manually verified:** `{"cpu_percent": 16.9, "ram_mb": 26173, "vram_mb": 9786, "throttled": true}` (RAM > 16GB threshold — thresholds may need tuning for this machine)
+- 9 unit tests: all threshold permutations + status key shape
 
-- Monitor CPU/memory/GPU usage
-- Implement throttling for high-frequency tasks (API calls, polling)
-- Auto-pause agent if resource exhaustion detected
-- **Files:** agent/core/resource_monitor.py (new)
-- **Complexity:** MEDIUM
+#### ✅ 8.3 Background Task Cleanup
 
-#### 8.3 Background Task Cleanup
+- `AgentLoop._cleanup_completed_tasks(older_than_hours=24)` — SQLite DELETE on completed task_runs
+- Background thread in `run_wake_listener.py` fires every 5 minutes (daemon, non-blocking)
+- `POST /actions/cleanup-tasks?older_than_hours=24` — manual trigger endpoint
+- Returns `{deleted_count, oldest_retained_ts}`
 
-- Automatically clean up completed/timed-out tasks to avoid memory leaks
-- Implement task registry cleanup similar to N.E.K.O
-- **Files:** agent/core/agent_loop.py
-- **Complexity:** LOW
+#### 8.4 KV Cache Quantization — Deferred
 
-#### 8.4 TurboQuant KV Cache (optional)
-
-- Optimize LLM inference with KV cache quantization
-- Reduces memory footprint for long conversations
-- Low priority, only if VRAM becomes constraint
-- **Files:** agent/core/llama_backend.py
-- **Complexity:** LOW
+- q8_0 KV cache to save VRAM — accuracy tradeoff not worth it with >15GB headroom on RTX 3090
 
 ---
 
