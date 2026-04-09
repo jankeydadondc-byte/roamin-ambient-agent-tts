@@ -1,9 +1,29 @@
 """tests/test_model_router.py — Tests for A2 model router."""
 
 import json
+import sys
+import types
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Environment guard: `requests` may not be installed when tests run under the
+# system Python rather than the project venv. Pre-stub the module so:
+#   (a) patch("requests.post", ...) can resolve its target, and
+#   (b) the lazy `import requests` inside model_router.respond() gets the mock.
+# Exception classes map to real built-ins so except clauses in model_router.py
+# (requests.Timeout, requests.ConnectionError, requests.RequestException) work.
+# When running under the project venv (requests IS installed), guard skips
+# entirely — tests run against the real library as normal.
+# ---------------------------------------------------------------------------
+if "requests" not in sys.modules:
+    _req_stub = types.ModuleType("requests")
+    _req_stub.Timeout = TimeoutError
+    _req_stub.ConnectionError = ConnectionError
+    _req_stub.RequestException = Exception
+    _req_stub.post = MagicMock()  # placeholder so patch("requests.post", ...) can replace it
+    sys.modules["requests"] = _req_stub
 
 from agent.core.model_router import ModelRouter
 
@@ -79,7 +99,6 @@ class TestHttpFallbackSizeLimit:
 
     def test_normal_chat_response_passes_through(self, router):
         """Chat response under 256KB reaches caller unchanged."""
-        # Build a minimal chat-completion JSON body
         payload = {"choices": [{"message": {"content": "hello world"}}]}
         mock_resp = MagicMock()
         mock_resp.content = json.dumps(payload).encode()
@@ -106,7 +125,6 @@ class TestHttpFallbackSizeLimit:
 
         ctx = self._force_http_path(router, mock_resp)
         with ctx[0], ctx[1], ctx[2], ctx[3]:
-            # No messages= kwarg triggers the raw/Ollama code path
             result = router.respond(self._HTTP_TASK, "hi")
 
         assert result == "ollama says hi"
@@ -128,7 +146,5 @@ class TestHttpFallbackSizeLimit:
                 )
 
         error_msg = str(exc_info.value)
-        # Actual byte count must appear so the log is useful for debugging
         assert "262145" in error_msg
-        # The hard limit must also appear so it's clear what the threshold is
         assert "max 262144" in error_msg

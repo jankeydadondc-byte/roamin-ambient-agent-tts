@@ -7,7 +7,11 @@
 # llama-cpp-python  <- installed separately
 
 # --- Memory ---
+# NOTE: mempalace requires chromadb<0.7 but chromadb 0.6.x is broken on Python 3.14
+# (pydantic v1 incompatibility). Using chromadb 1.5.5 — mempalace search degrades
+# gracefully until the upstream mempalace chromadb constraint is updated.
 chromadb>=0.5.0
+mempalace
 
 # --- Voice ---
 pyttsx3>=2.90

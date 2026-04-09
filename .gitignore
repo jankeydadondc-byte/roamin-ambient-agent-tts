@@ -19,6 +19,11 @@ logs/
 *.db
 *.sqlite
 chroma_db/
+mem_palace_data/
+
+# MemPalace generated files (project root)
+mempalace.yaml
+entities.json
 agent/core/voice/phrase_cache/
 models/
 *.gguf

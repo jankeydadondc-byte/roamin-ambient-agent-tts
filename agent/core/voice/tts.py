@@ -31,6 +31,9 @@ except ImportError:
 CHATTERBOX_BASE_PORT = 4123
 CHATTERBOX_PORT_RANGE = range(4123, 4130)
 _VOICE_SAMPLE = Path(r"C:\AI\chatterbox-api\voice-sample.mp3")
+# Dev kill switch: if this file exists, skip Chatterbox entirely and use SAPI fallback.
+# Create logs/.disable-chatterbox to test pyttsx3 TTS without stopping Chatterbox manually.
+_DISABLE_FLAG = Path(__file__).parents[3] / "logs" / ".disable-chatterbox"
 _TMP_DIR = Path(tempfile.gettempdir()) / "roamin_tts"
 _CACHE_DIR = Path(__file__).parent / "phrase_cache"
 
@@ -112,6 +115,8 @@ def _split_sentences(text: str) -> list[str]:
 
 def _find_chatterbox_url() -> str | None:
     """Scan port range for a running Chatterbox instance. Returns base URL or None."""
+    if _DISABLE_FLAG.exists():  # dev kill switch — force SAPI fallback
+        return None
     if _requests is None:
         return None
     for port in CHATTERBOX_PORT_RANGE:

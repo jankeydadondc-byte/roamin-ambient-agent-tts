@@ -1,4 +1,4 @@
-"""Tool registry — catalog of available tools with schemas and implementations."""
+﻿"""Tool registry â€” catalog of available tools with schemas and implementations."""
 
 from __future__ import annotations
 
@@ -22,6 +22,130 @@ _TOOL_FALLBACKS: dict[str, list[tuple[str, object]]] = {
         ("memory_search", lambda p: {"query": p.get("fact_name", "")}),
     ],
 }
+
+
+def approve_before_execution(
+    registry: "ToolRegistry",
+    store,  # injected via dependency — no type annotation to avoid forward-ref issues
+    tool_name: str,
+    params: dict | None,
+    timeout: int = 60,
+    skip_approval: bool = False,
+) -> tuple[bool, dict | None]:
+    """
+    Request approval before executing HIGH-risk tool.
+
+    Args:
+        registry: ToolRegistry with available tools
+        store: MemoryStore with pending_approvals table (injected via dependency)
+        tool_name: Name of tool to execute (e.g., "run_python")
+        params: Tool parameters (for action description)
+        timeout: Max seconds to wait for approval (default 60)
+        skip_approval: If True, bypass approval gate entirely
+
+    Returns:
+        (success, result_or_error_dict):
+            - If success=True and user approved: return None (will fall through to normal execution)
+            - If denied/timeout/error: return structured error dict
+
+    Side effects:
+        - Fires toast notification (winnotify) with Approve/Deny buttons
+        - Logs skip warning to audit trail if bypassed
+    """
+
+    # Check if skip mode is enabled (dev only)
+    if skip_approval:
+        from agent.core import audit_log as audit_module
+
+        audit_module.append(
+            tool="skip_approval",
+            params={"tool_name": tool_name},
+            result_summary="Approval gate bypassed (" + tool_name + ")",
+            duration_ms=1,
+            success=False,
+        )
+        return True, None  # Fall through to normal execution
+
+    # Get tool risk level from registration
+    tool_info = registry.get(tool_name)
+    if not tool_info:
+        # Unknown tool — assume safe (default LOW risk)
+        return True, None
+
+    risk = tool_info.get("risk", "low")
+
+    # Only HIGH-risk tools require approval by default
+    if risk.lower() != "high":
+        return True, None  # LOW/MED risk tools skip approval gate
+
+    # No store available (e.g. test context without injection) — fail open with warning
+    if store is None:
+        logger.warning("Approval store not injected; HIGH-risk tool '%s' running without approval gate", tool_name)
+        return True, None
+
+    # Explicit opt-out
+    if tool_info.get("approval_required", True) is False:
+        return True, None
+
+    # Build action description from params
+    action_desc = tool_name + " operation"
+    if params:
+        param_str = str(params)
+        if len(param_str) > 300:
+            action_desc += f" ({param_str[:277]}...)"
+        else:
+            action_desc += f": {param_str}"
+
+    logger.info("Approval gate: HIGH-risk tool '%s' requires approval", tool_name)
+
+    # Create pending approval record
+    aid = store.create_pending_approval(
+        task_run_id=None,
+        step_number=0,
+        tool=tool_name,
+        action=action_desc,
+        params_json=str(params) if params else "",
+        risk="high",
+    )
+    logger.info("Approval gate: pending_approval created (aid=%s) for '%s'", aid, tool_name)
+
+    # Fire toast notification (fire-and-forget, never fatal)
+    try:
+        import json as _json
+
+        from agent.core import ports as _ports
+
+        _port = _ports.CONTROL_API_DEFAULT_PORT
+        try:
+            from agent.core import paths as _paths
+
+            _disc = _paths.get_project_root() / ".loom" / "control_api_port.json"
+            _port = _json.loads(_disc.read_text()).get("port", _port)
+        except Exception:
+            pass
+        from agent.core.screen_observer import _notify_approval_toast
+
+        _notify_approval_toast(aid, action_desc, tool_name, _port)
+        logger.info("Approval gate: notification sent (aid=%s, port=%s)", aid, _port)
+    except Exception as _e:
+        logger.warning("Approval gate: notification failed for %s (aid=%s): %s", tool_name, aid, _e)
+
+    # Poll for user decision — blocks until approved, denied, or timeout
+    logger.info("Approval gate: waiting for resolution (aid=%s, timeout=%ss)", aid, timeout)
+    result = store.poll_approval_resolution(aid, timeout)
+    logger.info("Approval gate: resolved (aid=%s) → status=%s", aid, result["status"])
+
+    # Handle resolution
+    if result["status"] == "approved":
+        return True, None  # Approved — fall through to normal execution
+
+    else:  # denied or timeout
+        error_msg = tool_name + " execution blocked: " + result.get("reason", "user denial or timeout")
+        return False, {
+            "success": False,
+            "error_type": "approval_" + result["status"],
+            "message": error_msg,
+        }
 
 
 class ToolRegistry:
@@ -234,10 +358,27 @@ class ToolRegistry:
             return {"success": False, "error": str(e)}
 
     def execute(self, name: str, params: dict) -> dict:
-        """Execute a tool by name. On failure, try configured fallback chain if any.
+        """Execute a tool by name, with approval gate for HIGH-risk tools.
 
-        Every execution (primary and fallback) is recorded in the audit log.
+        On failure, tries configured fallback chain. Every execution is recorded in the audit log.
         """
+
+        # Call pre-execution approval hook for HIGH-risk tools
+        import os
+
+        success, result_or_error = approve_before_execution(
+            registry=self,
+            store=getattr(self, "store", None),  # injected at runtime from run_wake_listener.py
+            tool_name=name,
+            params=params,
+            timeout=60,  # Can be configured via ROAMIN_APPROVAL_TIMEOUT env var
+            skip_approval=os.environ.get("ROAMIN_SKIP_APPROVAL", "").lower() == "1",
+        )
+
+        if not success:
+            return result_or_error  # Structured error from approval denial/timeout
+
+        # Execute the tool (LOW/MED risk or approved HIGH risk)
         t0 = time.perf_counter()
         result = self._execute_single(name, params)
         elapsed = (time.perf_counter() - t0) * 1000
@@ -253,7 +394,7 @@ class ToolRegistry:
             )
             return result
 
-        # Primary failed — try fallback chain
+        # Primary failed â€” try fallback chain
         for fallback_name, adapter in _TOOL_FALLBACKS.get(name, []):
             adapted_params = adapter(params) if adapter is not None else params  # type: ignore[operator]
             t1 = time.perf_counter()
@@ -273,7 +414,7 @@ class ToolRegistry:
                 return fb_result
             logger.debug("Fallback '%s' also failed: %s", fallback_name, fb_result.get("error"))
 
-        # All exhausted — log the failure
+        # All exhausted â€” log the failure
         total_elapsed = (time.perf_counter() - t0) * 1000
         audit_log.append(
             tool=name,
@@ -282,7 +423,7 @@ class ToolRegistry:
             result_summary=str(result.get("error", ""))[:200],
             duration_ms=total_elapsed,
         )
-        return result  # all fallbacks exhausted — return original failure
+        return result  # all fallbacks exhausted â€” return original failure
 
     def format_for_prompt(self) -> str:
         """Format tool list for inclusion in a model prompt."""

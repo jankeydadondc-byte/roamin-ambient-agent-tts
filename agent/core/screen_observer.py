@@ -189,16 +189,40 @@ $shell.Popup("{message}", 0, "{title}", 0x40)
 
 
 def _notify_approval_toast(approval_id: int, action: str, tool: str | None, port: int) -> None:
-    """Show a winotify toast with Approve/Deny buttons for a blocked step."""
+    """Show an Approve/Deny notification for a blocked HIGH-risk tool.
+
+    Tier 1: winotify toast with clickable Approve/Deny buttons.
+    Tier 2: PowerShell popup showing the approve/deny URLs (used when winotify unavailable).
+    Never fatal — exceptions at both tiers are silently swallowed.
+    """
+    label = f"{tool}: {action[:80]}" if tool else action[:80]
+    base = f"http://127.0.0.1:{port}"
+
+    # Tier 1: winotify native toast with action buttons
     try:
         from winotify import Notification
 
-        base = f"http://127.0.0.1:{port}"
-        label = f"{tool}: {action[:80]}" if tool else action[:80]
         toast = Notification(app_id="Roamin", title="Action needs approval", msg=label)
         toast.add_actions("Approve", f"{base}/approve/{approval_id}")
         toast.add_actions("Deny", f"{base}/deny/{approval_id}")
         toast.show()
+        return
+    except Exception:
+        pass  # fall through to PowerShell fallback
+
+    # Tier 2: PowerShell popup with approve/deny URLs (non-blocking)
+    try:
+        approve_url = f"{base}/approve/{approval_id}"
+        deny_url = f"{base}/deny/{approval_id}"
+        msg = f"Roamin needs approval to run: {label}\\n\\n" f"APPROVE: {approve_url}\\n" f"DENY:    {deny_url}"
+        powershell_script = f"""
+$shell = New-Object -ComObject WScript.Shell
+$shell.Popup("{msg}", 60, "Roamin — Action Needs Approval", 0x40)
+"""
+        subprocess.Popen(
+            ["powershell", "-Command", powershell_script],
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
     except Exception:
         pass  # never fatal
 

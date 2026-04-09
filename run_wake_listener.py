@@ -7,6 +7,7 @@ import os
 os.environ["RUST_LOG"] = "warn"
 
 import atexit  # noqa: E402
+import ctypes  # noqa: E402
 import logging  # noqa: E402
 import signal  # noqa: E402
 import socket  # noqa: E402
@@ -27,8 +28,27 @@ from agent.core.voice.wake_listener import WakeListener  # noqa: E402
 
 # Constants
 LOCK_FILE = Path(__file__).parent / "logs" / "_wake_listener.lock"
+_MUTEX_NAME = "Global\\RoaminWakeListener"
 
 logger = logging.getLogger(__name__)
+
+
+def _acquire_single_instance_mutex() -> object:
+    """Acquire a named Windows mutex. Exits immediately if another instance holds it.
+
+    The OS releases the mutex automatically on any process exit — normal, crash, or
+    SIGKILL — eliminating the PID-file race condition where two processes can both
+    pass the lock-file check before either has written it.
+
+    Returns the mutex handle; caller MUST keep it referenced for process lifetime.
+    If the handle is garbage-collected, Windows releases the mutex.
+    """
+    handle = ctypes.windll.kernel32.CreateMutexW(None, True, _MUTEX_NAME)
+    err = ctypes.windll.kernel32.GetLastError()
+    if err == 183:  # ERROR_ALREADY_EXISTS — another instance holds the mutex
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return None  # signal to caller that we lost the race
+    return handle
 
 
 def check_stale_lock(pid: int) -> bool:
@@ -197,12 +217,21 @@ def main() -> None:
     for noisy in ("comtypes", "urllib3", "httpx", "chromadb", "posthog", "primp", "ddgs", "h2", "hpack", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
-    # Single-instance guard
+    # Single-instance guard — named mutex (primary) + PID lock file (secondary)
+    # Mutex: OS-held, released automatically on any exit including crash/SIGKILL.
+    # PID file: kept for VBS launcher and tooling that need to inspect the running PID.
+    _mutex = _acquire_single_instance_mutex()
+    if _mutex is None:
+        print("[Roamin] Already running (mutex held by another instance). Exiting.")
+        sys.exit(0)
+
+    # PID file fallback: also check the legacy lock in case mutex namespace differs
     if LOCK_FILE.exists():
         try:
             pid = int(LOCK_FILE.read_text().strip())
             if check_stale_lock(pid):
                 logger.warning("WakeListener already running (PID: %s). Exiting.", pid)
+                ctypes.windll.kernel32.CloseHandle(_mutex)
                 sys.exit(0)
         except ValueError:
             pass
@@ -230,7 +259,7 @@ def main() -> None:
 
     try:
         added = model_sync.sync_from_providers()
-        logger.info("model_sync: %d new model(s) added to config", added)
+        print(f"[Roamin] model_sync: {added} new model(s) added to config", flush=True)
     except Exception as e:
         logger.warning("model_sync: unexpected error at startup (continuing): %s", e)
 

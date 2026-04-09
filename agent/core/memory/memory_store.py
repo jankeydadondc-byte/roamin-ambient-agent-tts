@@ -561,3 +561,19 @@ class MemoryStore:
             cursor.execute("SELECT * FROM pending_approvals WHERE status = 'pending' ORDER BY id DESC")
             columns = [col[0] for col in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    def poll_approval_resolution(self, approval_id: int, timeout: int = 60) -> dict:
+        """Poll pending_approvals every second until resolved or timeout elapses.
+
+        Returns a dict with 'status' ('approved', 'denied', or 'timeout') and 'reason'.
+        Reuses get_pending_approval() — no additional DB schema needed.
+        """
+        import time
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            row = self.get_pending_approval(approval_id)
+            if row and row.get("status") not in ("pending", None):
+                return {"status": row["status"], "reason": row.get("resolved_by", "")}
+            time.sleep(1)
+        return {"status": "timeout", "reason": "approval_timeout"}
