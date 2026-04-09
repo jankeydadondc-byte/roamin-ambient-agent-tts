@@ -256,6 +256,49 @@ class AgentLoop:
             return 2
         return 1
 
+    def _should_throttle(self) -> bool:
+        """Return True if system resources are exhausted and the step should be deferred."""
+        try:
+            from agent.core.resource_monitor import is_resource_exhausted
+
+            return is_resource_exhausted()
+        except Exception:
+            return False  # Fail open — never block execution on monitoring failure
+
+    def _cleanup_completed_tasks(self, older_than_hours: int = 24) -> dict:
+        """Delete completed task_runs older than *older_than_hours* from SQLite.
+
+        Returns:
+            dict with keys ``deleted_count`` and ``oldest_retained_ts``.
+        """
+        import sqlite3
+        from datetime import datetime, timedelta
+        from pathlib import Path
+
+        db_path = Path(__file__).parent / "memory" / "roamin_memory.db"
+        if not db_path.exists():
+            return {"deleted_count": 0, "oldest_retained_ts": None}
+
+        cutoff = (datetime.now() - timedelta(hours=older_than_hours)).isoformat()
+        try:
+            conn = sqlite3.connect(str(db_path), timeout=5)
+            cur = conn.cursor()
+            cur.execute(
+                "DELETE FROM task_runs WHERE status = 'completed' AND started_at < ?",
+                (cutoff,),
+            )
+            deleted = cur.rowcount
+            cur.execute("SELECT MIN(started_at) FROM task_runs WHERE status IN ('completed', 'running')")
+            row = cur.fetchone()
+            oldest = row[0] if row and row[0] else None
+            conn.commit()
+            conn.close()
+            logger.info("Task cleanup: deleted %d rows, oldest retained: %s", deleted, oldest)
+            return {"deleted_count": deleted, "oldest_retained_ts": oldest}
+        except Exception as exc:
+            logger.warning("Task cleanup failed: %s", exc)
+            return {"deleted_count": 0, "oldest_retained_ts": None}
+
     def _generate_plan(self, goal: str, context: str, task_type: str) -> list[dict] | None:
         """Call the model and parse a list of steps from its response."""
         system_prompt = (
@@ -309,6 +352,14 @@ class AgentLoop:
             "status": "pending",
             "blocked": False,
         }
+
+        # Throttle check — skip when ROAMIN_USE_ASYNC is off (default)
+        import os
+
+        if os.environ.get("ROAMIN_USE_ASYNC", "").lower() == "1" and self._should_throttle():
+            step_result["status"] = "skipped"
+            step_result["reason"] = "System resources exhausted — throttled"
+            return step_result
 
         # Block high-risk steps — do not execute
         if risk == "high":

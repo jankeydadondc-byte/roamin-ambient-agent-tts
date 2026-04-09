@@ -32,6 +32,9 @@ requests>=2.31.0
 torch>=2.6.0
 numpy>=1.26.0
 
+# --- System monitoring ---
+psutil>=5.9.0
+
 # --- Windows ---
 pywin32>=306
 winotify>=1.1.0

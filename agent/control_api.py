@@ -413,6 +413,28 @@ async def get_audit_log(limit: int = 50, tool: str | None = None, since: str | N
     return {"entries": entries, "count": len(entries)}
 
 
+@app.get("/health")
+async def health_check() -> dict[str, Any]:
+    """Return current CPU/RAM/VRAM usage and throttle status."""
+    try:
+        from agent.core.resource_monitor import get_throttle_status
+
+        status = get_throttle_status()
+    except Exception as exc:
+        status = {"error": str(exc)}
+    status["timestamp"] = datetime.utcnow().isoformat() + "Z"
+    return status
+
+
+@app.post("/actions/cleanup-tasks")
+async def cleanup_tasks(older_than_hours: int = 24) -> dict[str, Any]:
+    """Delete completed task_runs older than *older_than_hours* (default 24)."""
+    from agent.core.agent_loop import AgentLoop
+
+    loop = AgentLoop()
+    return loop._cleanup_completed_tasks(older_than_hours=older_than_hours)
+
+
 @app.post("/actions/{action}")
 async def control_action(action: str) -> dict[str, Any]:
     if action not in ("start", "stop", "restart"):

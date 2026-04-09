@@ -293,6 +293,19 @@ def main() -> None:
 
     threading.Thread(target=_log_prune_loop, daemon=True).start()
 
+    # Periodic task cleanup (every 5 minutes — removes completed task_runs older than 24h)
+    def _task_cleanup_loop():
+        while True:
+            time.sleep(300)
+            try:
+                result = agent_loop._cleanup_completed_tasks(older_than_hours=24)
+                if result["deleted_count"] > 0:
+                    print(f"[Roamin] Task cleanup: removed {result['deleted_count']} old task(s)")
+            except Exception:
+                pass
+
+    threading.Thread(target=_task_cleanup_loop, daemon=True).start()
+
     try:
         keyboard.wait()
     except KeyboardInterrupt:
