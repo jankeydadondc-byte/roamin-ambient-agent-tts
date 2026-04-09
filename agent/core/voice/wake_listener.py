@@ -226,6 +226,44 @@ def _try_direct_dispatch(transcription: str, registry: ToolRegistry) -> dict | N
     """
     lower = transcription.lower()
 
+    # --- MemPalace (must precede web_search — "search my memories" would match the broad search regex) ---
+    _MEMORY_SEARCH_TRIGGERS = [
+        "search my memories for ",
+        "search my memories ",
+        "search memories for ",
+        "my memories for ",
+        "search the palace for ",
+        "search the palace ",
+        "search palace for ",
+        "mempalace search ",
+        "mem palace search ",
+    ]
+    for trigger in _MEMORY_SEARCH_TRIGGERS:
+        if trigger in lower:
+            idx = lower.index(trigger) + len(trigger)
+            query = transcription[idx:].strip().rstrip(".?!")
+            if query:
+                print(f"[Roamin] Direct dispatch: mempalace_search('{query}')")
+                return registry.execute("mempalace_search", {"query": query})
+
+    _PALACE_STATUS_TRIGGERS = [
+        "palace status",
+        "mempalace status",
+        "mem palace status",
+        "what's in the palace",
+        "what is in the palace",
+        "what's inside the palace",
+        "what is inside the palace",
+        "show me the palace",
+        "show palace",
+        "palace contents",
+        "what's stored in the palace",
+        "what is stored in the palace",
+    ]
+    if any(t in lower for t in _PALACE_STATUS_TRIGGERS):
+        print("[Roamin] Direct dispatch: mempalace_status()")
+        return registry.execute("mempalace_status", {})
+
     # --- Web search ---
     for trigger in [
         "web search for ",
@@ -571,7 +609,8 @@ class WakeListener:
         memory_context = self._build_memory_context(transcription, memory)
 
         # Layer 1: Direct tool dispatch — pattern match to skip AgentLoop
-        registry = ToolRegistry()
+        # Use agent_loop.registry (has plugins loaded) instead of a fresh ToolRegistry()
+        registry = agent_loop.registry
         direct_result = _try_direct_dispatch(transcription, registry)
         t_dispatch = time.perf_counter()
 

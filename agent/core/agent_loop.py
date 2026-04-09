@@ -98,8 +98,8 @@ class AgentLoop:
             except Exception:
                 screen_obs = {"error": "screen observation failed"}
 
-        # Build context
-        context = self._context_builder.build(goal, screen_observation=screen_obs)
+        # Build context — pass self._registry so plugin tools appear in the tool list
+        context = self._context_builder.build(goal, screen_observation=screen_obs, registry=self._registry)
 
         # Generate plan from model
         if on_progress:

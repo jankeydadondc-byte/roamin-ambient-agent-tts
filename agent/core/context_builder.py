@@ -18,6 +18,7 @@ class ContextBuilder:
         goal: str,
         screen_observation: dict | None = None,
         max_memory_results: int = 5,
+        registry: ToolRegistry | None = None,
     ) -> str:
         """
         Build a context string for a model prompt.
@@ -62,8 +63,8 @@ class ContextBuilder:
                 parts.append("## Screen Observation")
                 parts.append(f"(unavailable: {screen_observation['error']})")
 
-        # Available tools
+        # Available tools — prefer the injected registry (has plugins) over the default one
         parts.append("## Available Tools")
-        parts.append(self._registry.format_for_prompt())
+        parts.append((registry or self._registry).format_for_prompt())
 
         return "\n\n".join(parts)
