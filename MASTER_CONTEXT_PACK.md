@@ -1,6 +1,6 @@
 # Roamin Ambient Agent — Master Context Pack
 
-# Updated: 2026-04-09 (Priority 7 security hardening complete; MemPalace semantic memory integrated as plugin; UnboundLocalError + direct dispatch routing bugs fixed; Priority 8 performance & scalability complete — async utils, resource monitor, task cleanup; all committed and pushed to main)
+# Updated: 2026-04-10 (Priority 9 complete — structured logging (JsonFormatter, ThrottledLogger, request ID tracing) + 50 unit tests across 6 new test files covering context_builder, agent_loop cleanup/throttle, mempalace plugin, wake_listener direct dispatch; all committed and pushed to main)
 
 # For: new Claude conversations to pick up where we left off
 
@@ -8,7 +8,7 @@
 
 # GitHub: jankeydadondc-byte/roamin-ambient-agent-tts (private)
 
-# Latest commit: 2418cfa — feat: Priority 8 — async utils, resource monitor, task cleanup
+# Latest commit: aae4754 — feat: Priority 9 — structured logging + unit tests for core modules
 
 ---
 
@@ -890,34 +890,29 @@ OpenSpec: `openspec/changes/ux-experience-enhancements/` — all tasks checked o
 
 ---
 
-### Priority 9: TESTING & DEBUGGING
+### Priority 9: TESTING & DEBUGGING ✅ COMPLETE — commit `aae4754`
 
-**Status:** Basic test infrastructure in place; comprehensive coverage needed
+**Status:** Complete. 50 unit tests passing, 0 warnings. Openspec archived.
 
-**Planned enhancements:**
+#### 9.1 Unit Tests for Uncovered Core Modules ✅
 
-#### 9.1 Unit & Integration Tests
+- `tests/unit/test_context_builder.py` — 5 tests (registry override, screen obs, max_memory_results=0)
+- `tests/unit/test_agent_loop_cleanup.py` — 7 tests (_cleanup_completed_tasks SQLite logic, _should_throttle fail-open)
+- `tests/unit/test_mempalace_plugin.py` — 11 tests (tool registration, result format, subprocess, ImportError)
+- `tests/unit/conftest.py` — stubs chromadb/keyboard/llama_cpp so unit tests run without full runtime
 
-- Add comprehensive unit tests for core components
-- Test task execution, plugin handling, memory recall
-- Use pytest + unittest.mock for mocking
-- **Files:** tests/ (new directory)
-- **Complexity:** MEDIUM
+#### 9.2 Structured Logging ✅
 
-#### 9.2 Structured Logging
+- `agent/core/roamin_logging.py` extended (additive — no API breaks):
+  - `JsonFormatter` — single-line JSON records: timestamp (ISO-8601+tz), level, logger, message, optional request_id
+  - `ThrottledLogger` — cooldown-based duplicate suppression with flush() summary
+  - `bind_request_id(id)` context manager + `set/get_request_id()` helpers (contextvars-based)
+  - `get_json_logger(name, log_file=None)` — factory for JSON-emitting loggers
+- `tests/unit/test_roamin_logging.py` — 9 tests
 
-- Enhance logging with JSON format for easier debugging
-- Implement _throttled_logger to avoid log spam
-- Include request ID for tracing calls through system
-- **Files:** agent/core/logging_config.py (new)
-- **Complexity:** LOW
+#### 9.3 Error Recovery Testing (Gap Fill) ✅
 
-#### 9.3 Error Recovery Testing
-
-- Test retry logic for transient failures
-- Verify exponential backoff works correctly
-- **Files:** tests/
-- **Complexity:** LOW
+- `tests/unit/test_wake_listener_dispatch.py` — 5 tests: mempalace routing patterns, web_search fallthrough, unrecognized phrase returns None, registry wiring confirmed
 
 ---
 
@@ -1274,20 +1269,15 @@ Openspec approved gates task: READY FOR IMPLEMENTATION
 - Priority 7 (Security & Integration Hardening): ✅ MOSTLY COMPLETE (4/5 tasks done)
 
 **Next Priority Work:**
-1. **Priority 7.3 — Approval Gates Implementation** (Openspec proposal ready)
-2. **Priority 8 — Performance & Scalability Optimization**
-   - Asynchronous task execution (asyncio for I/O-bound ops)
-   - Resource monitoring & throttling
-   - Background task cleanup
-   - TurboQuant KV cache (optional, if VRAM becomes constraint)
-3. **Priority 9 — Testing & Debugging Enhancement**
-   - Comprehensive unit/integration test coverage
-   - Structured JSON logging with request IDs
-   - Error recovery testing for transient failures
-4. **Priority 10 — Documentation & Onboarding**
+1. **Priority 10 — Documentation & Onboarding**
    - Interactive documentation (UI guide, tooltips)
    - Plugin development guides and templates
    - Troubleshooting guides
+
+**Completed Priorities (for reference):**
+- ✅ P7 — Security hardening (approval gates, audit log, secrets, HITL)
+- ✅ P8 — Performance & scalability (async utils, resource monitor, task cleanup)
+- ✅ P9 — Testing & debugging (50 unit tests, structured logging, request ID tracing)
 
 **Architecture Decision Points:**
 
@@ -1301,7 +1291,7 @@ Openspec approved gates task: READY FOR IMPLEMENTATION
 | Startup chain | ✅ VBScript + PowerShell | Windows-native, no external deps |
 | Extensibility | 🔄 Plugin system (Phase 5) | Tool registry exists, isolation/sandboxing TBD |
 
-**Latest Commit:** `6abff1b` — fix: resolve pytest temp-dir symlink permission error on Windows
+**Latest Commit:** `aae4754` — feat: Priority 9 — structured logging + unit tests for core modules
 
 **Repo:** C:\AI\roamin-ambient-agent-tts
 **GitHub:** jankeydadondc-byte/roamin-ambient-agent-tts (private)
