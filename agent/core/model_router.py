@@ -11,6 +11,33 @@ from pathlib import Path
 _CONFIG_PATH = Path(__file__).parent / "model_config.json"
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Runtime model overrides — survives across ModelRouter instances within a
+# single process.  Use set_task_model() / clear_task_model() from the API
+# layer; these are intentionally module-level so every fresh ModelRouter()
+# picks them up automatically.
+# ---------------------------------------------------------------------------
+
+_TASK_OVERRIDES: dict[str, str] = {}
+
+
+def set_task_model(task: str, model_id: str) -> None:
+    """Override the model used for *task* until cleared or process restart."""
+    _TASK_OVERRIDES[task] = model_id
+    logger.info("Model override: task '%s' -> model '%s'", task, model_id)
+
+
+def clear_task_model(task: str) -> None:
+    """Remove the runtime override for *task*, reverting to config default."""
+    removed = _TASK_OVERRIDES.pop(task, None)
+    if removed:
+        logger.info("Model override cleared: task '%s' (was '%s')", task, removed)
+
+
+def get_task_overrides() -> dict[str, str]:
+    """Return a snapshot of all active runtime overrides."""
+    return dict(_TASK_OVERRIDES)
+
 
 class ModelRouter:
     def __init__(self, config_path: Path | None = None):
@@ -21,7 +48,16 @@ class ModelRouter:
         self._fallback = self._config["fallback_chain"]
 
     def select(self, task: str) -> dict:
-        """Return the model config dict for a given task type."""
+        """Return the model config dict for a given task type.
+
+        Checks runtime overrides (set via ``set_task_model()``) before
+        consulting the static routing rules in ``model_config.json``.
+        """
+        # Runtime override takes priority
+        override_id = _TASK_OVERRIDES.get(task)
+        if override_id and override_id in self._models:
+            return self._models[override_id]
+
         model_id = self._rules.get(task) or self._rules.get("default")
         model = self._models.get(model_id)
         if model is None:
@@ -127,28 +163,35 @@ class ModelRouter:
         Raises:
             RuntimeError: If all inference backends fail.
         """
-        # Try LlamaCppBackend first
-        try:
-            from agent.core.llama_backend import CAPABILITY_MAP, get_llm_response
+        # Try LlamaCppBackend first — but skip if a runtime override is active
+        # (overrides route through the config-based file_path dispatch below)
+        has_override = task in _TASK_OVERRIDES
+        if not has_override:
+            try:
+                from agent.core.llama_backend import CAPABILITY_MAP, get_llm_response
 
-            if task in CAPABILITY_MAP and CAPABILITY_MAP.get(task) is not None:
-                logger.debug("Using LlamaCppBackend for task '%s'", task)
-                return get_llm_response(
-                    prompt=prompt,
-                    capability=task,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    messages=messages,
-                    no_think=no_think,
-                    stream_think=stream_think,
-                )
-            else:
-                logger.debug(
-                    "Task '%s' not in CAPABILITY_MAP or GGUF missing, falling back to HTTP",
-                    task,
-                )
-        except ImportError as e:
-            logger.debug("llama-cpp-python import failed: %s. Falling back to HTTP", e)
+                if task in CAPABILITY_MAP and CAPABILITY_MAP.get(task) is not None:
+                    logger.debug("Using LlamaCppBackend for task '%s'", task)
+                    return get_llm_response(
+                        prompt=prompt,
+                        capability=task,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        messages=messages,
+                        no_think=no_think,
+                        stream_think=stream_think,
+                    )
+                else:
+                    logger.debug(
+                        "Task '%s' not in CAPABILITY_MAP or GGUF missing, falling back to HTTP",
+                        task,
+                    )
+            except ImportError as e:
+                logger.debug("llama-cpp-python import failed: %s. Falling back to HTTP", e)
+        else:
+            logger.info(
+                "Runtime override active for task '%s' -> '%s', skipping CAPABILITY_MAP", task, _TASK_OVERRIDES[task]
+            )
 
         # Try config-based file_path dispatch (filesystem-discovered models)
         selected = self.select(task)

@@ -14,7 +14,9 @@ import os
 import socket
 import tempfile
 import time
-from datetime import datetime
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +29,15 @@ from agent.core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Roamin Control API (dev)")
+
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    """Modern lifespan handler replacing deprecated @app.on_event('startup')."""
+    await _startup_init(application)
+    yield
+
+
+app = FastAPI(title="Roamin Control API (dev)", lifespan=lifespan)
 
 # Allow local dev browser connections by default for the SPA prototype
 app.add_middleware(
@@ -85,7 +95,7 @@ def _write_discovery_file(port: int) -> Path:
     record = {
         "port": int(port),
         "pid": os.getpid(),
-        "started_at": datetime.utcnow().isoformat() + "Z",
+        "started_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "version": "0.1.0",
     }
 
@@ -107,14 +117,31 @@ def _write_discovery_file(port: int) -> Path:
                 pass
 
 
-@app.on_event("startup")
-async def _startup_event() -> None:
+async def _startup_init(application: FastAPI) -> None:
     """Initialise in-memory state and start background broadcaster."""
-    # In-memory 'database' for prototype
-    app.state.models = [{"id": "dummy-model", "name": "Dummy", "status": "idle"}]
-    app.state.plugins: list[dict[str, Any]] = []
-    app.state.tasks: list[dict[str, Any]] = []
-    app.state.websockets: set[WebSocket] = set()
+    application.state.started_at = time.time()
+
+    # Load real model list from ModelRouter (fall back to dummy if unavailable)
+    try:
+        from agent.core.model_router import ModelRouter
+
+        router = ModelRouter()
+        application.state.models = [
+            {
+                "id": m["id"],
+                "name": m.get("name", m["id"]),
+                "status": "loaded" if m.get("always_available") else "unloaded",
+                "provider": m.get("provider", "unknown"),
+                "capabilities": m.get("capabilities", []),
+            }
+            for m in router.list_models()
+        ]
+    except Exception:
+        application.state.models = [{"id": "dummy-model", "name": "Dummy", "status": "idle"}]
+
+    application.state.plugins: list[dict[str, Any]] = []
+    application.state.tasks: list[dict[str, Any]] = []
+    application.state.websockets: set[WebSocket] = set()
 
     # Determine a preferred port and write discovery file so local UIs can find us.
     port = int(os.environ.get("ROAMIN_CONTROL_API_PORT") or _find_free_port_in_range())
@@ -197,9 +224,10 @@ async def websocket_events(ws: WebSocket) -> None:
 
 @app.get("/status")
 async def get_status() -> dict[str, Any]:
+    uptime = int(time.time() - getattr(app.state, "started_at", time.time()))
     return {
         "status": "ok",
-        "uptime": int(time.time()),
+        "uptime": uptime,
         "version": "0.1.0",
         "models": app.state.models,
     }
@@ -208,6 +236,55 @@ async def get_status() -> dict[str, Any]:
 @app.get("/models")
 async def list_models() -> dict[str, Any]:
     return {"models": app.state.models}
+
+
+@app.post("/models/select")
+async def select_model(request: Request) -> dict[str, Any]:
+    """Switch the model used for a routing task at runtime.
+
+    Body: ``{"model_id": "some-model-id", "task": "default"}``
+    Send ``model_id: ""`` or ``null`` to revert to config default.
+    """
+    body = await request.json()
+    model_id = (body.get("model_id") or "").strip()
+    task = (body.get("task") or "default").strip()
+
+    from agent.core.model_router import ModelRouter, clear_task_model, set_task_model
+
+    if not model_id:
+        clear_task_model(task)
+        return {"status": "ok", "task": task, "model_id": None, "message": f"Reverted '{task}' to config default"}
+
+    router = ModelRouter()
+    known = {m["id"] for m in router.list_models()}
+    if model_id not in known:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found in config")
+
+    set_task_model(task, model_id)
+    model_cfg = router.select(task)
+    return {
+        "status": "ok",
+        "task": task,
+        "model_id": model_id,
+        "model_name": model_cfg.get("name", model_id),
+    }
+
+
+@app.get("/models/current")
+async def current_model_routing() -> dict[str, Any]:
+    """Return the active routing table with any runtime overrides flagged."""
+    from agent.core.model_router import ModelRouter, get_task_overrides
+
+    router = ModelRouter()
+    overrides = get_task_overrides()
+    routing: dict[str, Any] = {}
+    for task, model_id in router._rules.items():
+        override = overrides.get(task)
+        routing[task] = {
+            "model_id": override or model_id,
+            "overridden": override is not None,
+        }
+    return {"routing": routing, "overrides": overrides}
 
 
 @app.get("/plugins")
@@ -226,19 +303,21 @@ async def get_plugin(plugin_id: str) -> dict[str, Any]:
 @app.post("/plugins/{plugin_id}/action")
 async def plugin_action(plugin_id: str, body: dict[str, Any]) -> dict[str, Any]:
     action = body.get("action")
-    if action not in ("enable", "disable"):
+    if action not in ("enable", "disable", "restart"):
         raise HTTPException(status_code=400, detail="unknown action")
 
     for p in app.state.plugins:
         if p.get("id") == plugin_id:
-            p["enabled"] = True if action == "enable" else False
+            if action in ("enable", "disable"):
+                p["enabled"] = action == "enable"
+            # restart: toggle off then on (status remains enabled)
             app.state.tasks.append(
                 {
                     "id": f"plugin-action-{int(time.time()*1000)}",
                     "type": action,
                     "plugin": plugin_id,
                     "status": "completed",
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
                 }
             )
             await _broadcast({"type": "plugin_event", "data": {"plugin_id": plugin_id, "event": action}})
@@ -268,7 +347,12 @@ async def _simulate_install(payload: dict[str, Any], task_id: str) -> None:
     }
     app.state.plugins.append(plugin)
     app.state.tasks.append(
-        {"id": task_id, "type": "install", "status": "completed", "timestamp": datetime.utcnow().isoformat() + "Z"}
+        {
+            "id": task_id,
+            "type": "install",
+            "status": "completed",
+            "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        }
     )
     await _broadcast({"type": "plugin_event", "data": {"plugin_id": plugin["id"], "event": "installed"}})
 
@@ -298,23 +382,50 @@ async def uninstall_plugin(plugin_id: str) -> dict[str, Any]:
 
 @app.get("/task-history")
 async def task_history(
+    page: int = 1,
+    per_page: int = 20,
     since: str | None = None,
     status: str | None = None,
+    task_type: str | None = None,
     q: str | None = None,
 ) -> dict[str, Any]:
-    """Return persistent task history from SQLite (with optional filters).
+    """Return persistent task history from SQLite with server-side pagination.
+
+    Query params:
+      page       — 1-based page number (default 1)
+      per_page   — results per page (default 20, max 100)
+      status     — filter by status (pending|running|completed|failed)
+      task_type  — filter by task_type column
+      since      — ISO-8601 datetime lower bound on started_at
+      q          — keyword search across all fields
 
     Falls back to in-memory tasks if the MemoryStore is unavailable.
     """
+    per_page = min(max(1, per_page), 100)
+    page = max(1, page)
     try:
         from agent.core.memory import MemoryManager
 
         mm = MemoryManager()
-        runs = mm.query_tasks(limit=50, status=status, since=since, keyword=q)
-        return {"tasks": runs}
+        result = mm.query_tasks(
+            limit=per_page,
+            page=page,
+            status=status,
+            since=since,
+            task_type=task_type,
+            keyword=q,
+        )
+        return result
     except Exception:
-        # Fallback to in-memory plugin/action tasks
-        return {"tasks": app.state.tasks}
+        # Fallback to in-memory plugin/action tasks (no pagination)
+        tasks = app.state.tasks
+        return {
+            "tasks": tasks,
+            "total": len(tasks),
+            "page": 1,
+            "per_page": len(tasks),
+            "pages": 1,
+        }
 
 
 @app.get("/task-history/{task_id}/steps")
@@ -422,7 +533,7 @@ async def health_check() -> dict[str, Any]:
         status = get_throttle_status()
     except Exception as exc:
         status = {"error": str(exc)}
-    status["timestamp"] = datetime.utcnow().isoformat() + "Z"
+    status["timestamp"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     return status
 
 
@@ -444,8 +555,153 @@ async def control_action(action: str) -> dict[str, Any]:
         "id": f"action-{int(time.time()*1000)}",
         "type": action,
         "status": "accepted",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
     app.state.tasks.append(task)
     await _broadcast({"type": "task_update", "data": {"task_id": task["id"], "status": "running"}})
     return {"result": "accepted", "action": action}
+
+
+# ---------------------------------------------------------------------------
+# Chat & Conversation Continuity (Priority 11.6)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/chat/history")
+async def chat_history(
+    session_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Return recent conversation exchanges from the session transcript.
+
+    Query params:
+        session_id: filter by session (default: current session)
+        limit: max results (default 50)
+        offset: pagination offset (default 0)
+    """
+    try:
+        from agent.core.voice.session import get_session
+
+        session = get_session()
+        history = session.get_history(session_id=session_id, limit=limit, offset=offset)
+        return {
+            "session_id": session_id or session.session_id,
+            "exchanges": history,
+            "count": len(history),
+        }
+    except Exception as e:
+        logger.warning("GET /chat/history failed: %s", e)
+        return {"session_id": None, "exchanges": [], "count": 0}
+
+
+@app.post("/chat")
+async def chat_send(request: Request) -> dict[str, Any]:
+    """Accept a text message, run through the unified Roamin pipeline, return response.
+
+    Delegates all processing to ``chat_engine.process_message()`` which handles
+    fact extraction, memory recall, MemPalace, AgentLoop tools, and ModelRouter
+    reply generation — the same pipeline used by the voice wake listener.
+
+    Body JSON: { "message": "...", "include_screen": false }
+    """
+    body = await request.json()
+    message = body.get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    include_screen = body.get("include_screen", False)
+
+    try:
+        from agent.core.chat_engine import process_message
+        from agent.core.voice.session import get_session
+
+        session = get_session()
+
+        # Add user message to session transcript
+        session.add("user", message)
+
+        # Run the full pipeline (blocking — offload to thread for async)
+        reply = await asyncio.to_thread(
+            process_message,
+            message,
+            session=session,
+            include_screen=include_screen,
+            mode="chat",
+        )
+
+        await _broadcast({"type": "chat_response", "data": {"message": reply}})
+
+        return {
+            "response": reply,
+            "session_id": session.session_id,
+        }
+    except Exception as e:
+        logger.error("POST /chat failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/chat/reset")
+async def chat_reset() -> dict[str, Any]:
+    """Reset the conversation session (start fresh)."""
+    try:
+        from agent.core.voice.session import get_session
+
+        session = get_session()
+        new_id = session.reset(reason="api")
+        return {"session_id": new_id, "status": "reset"}
+    except Exception as e:
+        logger.warning("POST /chat/reset failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/chat/pending")
+async def chat_pending() -> dict[str, Any]:
+    """Return pending proactive notifications (messages Roamin wanted to say)."""
+    try:
+        from agent.core.proactive import ProactiveEngine
+
+        # The proactive engine is instantiated in run_wake_listener — we can't
+        # easily access that instance here. Return empty for now; the Tauri
+        # chat overlay will poll this endpoint.
+        return {"messages": [], "count": 0}
+    except Exception:
+        return {"messages": [], "count": 0}
+
+
+# ---------------------------------------------------------------------------
+# Settings (Priority 11.3b)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/settings")
+async def get_settings() -> dict[str, Any]:
+    """Return current Roamin settings."""
+    return {
+        "volume": 1.0,
+        "screenshots_enabled": True,
+        "proactive_enabled": True,
+        "observation_interval": int(os.environ.get("ROAMIN_OBS_INTERVAL", "30")),
+        "session_timeout_min": int(os.environ.get("ROAMIN_SESSION_TIMEOUT_MIN", "30")),
+        "wake_threshold": float(os.environ.get("ROAMIN_WAKE_THRESHOLD", "0.5")),
+    }
+
+
+@app.post("/settings/volume")
+async def set_volume(request: Request) -> dict[str, Any]:
+    """Set TTS volume (0.0 to 1.0)."""
+    body = await request.json()
+    volume = body.get("volume", 1.0)
+    if not (0.0 <= volume <= 1.0):
+        raise HTTPException(status_code=400, detail="volume must be 0.0-1.0")
+    # Volume control will be wired to TTS engine when the proactive engine
+    # and TTS are accessible from here. For now, acknowledge the setting.
+    return {"volume": volume, "status": "accepted"}
+
+
+@app.post("/settings/screenshots")
+async def set_screenshots(request: Request) -> dict[str, Any]:
+    """Enable or disable screenshot observation."""
+    body = await request.json()
+    enabled = body.get("enabled", True)
+    return {"screenshots_enabled": enabled, "status": "accepted"}

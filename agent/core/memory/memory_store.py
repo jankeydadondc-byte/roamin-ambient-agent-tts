@@ -454,11 +454,13 @@ class MemoryStore:
 
     def get_task_runs(
         self,
-        limit: int = 50,
+        limit: int = 20,
+        offset: int = 0,
         status: str | None = None,
         since: str | None = None,
+        task_type: str | None = None,
     ) -> list[dict]:
-        """Query task runs with optional filters."""
+        """Query task runs with optional filters and pagination."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             query = "SELECT * FROM task_runs WHERE 1=1"
@@ -469,11 +471,38 @@ class MemoryStore:
             if since:
                 query += " AND started_at >= ?"
                 params.append(since)
-            query += " ORDER BY id DESC LIMIT ?"
-            params.append(limit)
+            if task_type:
+                query += " AND task_type = ?"
+                params.append(task_type)
+            query += " ORDER BY id DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
             cursor.execute(query, params)
             columns = [col[0] for col in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    def count_task_runs(
+        self,
+        status: str | None = None,
+        since: str | None = None,
+        task_type: str | None = None,
+    ) -> int:
+        """Return total count of task runs matching optional filters."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            query = "SELECT COUNT(*) FROM task_runs WHERE 1=1"
+            params: list = []
+            if status:
+                query += " AND status = ?"
+                params.append(status)
+            if since:
+                query += " AND started_at >= ?"
+                params.append(since)
+            if task_type:
+                query += " AND task_type = ?"
+                params.append(task_type)
+            cursor.execute(query, params)
+            row = cursor.fetchone()
+            return row[0] if row else 0
 
     def get_task_steps(self, task_run_id: int) -> list[dict]:
         """Get all steps for a given task run."""

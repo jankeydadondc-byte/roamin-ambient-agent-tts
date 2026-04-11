@@ -28,6 +28,15 @@ except ImportError:
 class SpeechToText:
     """STT engine using Whisper for transcription."""
 
+    # Whisper initial_prompt primes the decoder with proper nouns and domain
+    # vocabulary so it biases toward correct spellings instead of phonetic
+    # guesses like "A Roman" for "Roamin".
+    _INITIAL_PROMPT = (
+        "Roamin is an AI voice assistant. "
+        "Proper nouns: Roamin, Asherre, Mem Palace, MemPalace. "
+        "The user speaks commands to Roamin."
+    )
+
     def __init__(self, model_name: str = "base") -> None:
         self._model = None
         self._vad_model = None
@@ -152,7 +161,13 @@ class SpeechToText:
         try:
             audio = np.concatenate(audio_buffer).astype("float32")
 
-            result = self._model.transcribe(audio)
+            result = self._model.transcribe(
+                audio,
+                language="en",
+                initial_prompt=self._INITIAL_PROMPT,
+                temperature=0.0,  # greedy decode — suppresses hallucinated words
+                no_speech_threshold=0.6,  # raise threshold to reject silence
+            )
             text = result.get("text", "").strip()
 
             return text if text else None
@@ -172,7 +187,13 @@ class SpeechToText:
             sd.wait()
 
             audio = recording.flatten()
-            result = self._model.transcribe(audio)
+            result = self._model.transcribe(
+                audio,
+                language="en",
+                initial_prompt=self._INITIAL_PROMPT,
+                temperature=0.0,
+                no_speech_threshold=0.6,
+            )
             text = result.get("text", "").strip()
 
             return text if text else None

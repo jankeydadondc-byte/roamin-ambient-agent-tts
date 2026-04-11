@@ -23,6 +23,7 @@ from agent.core.memory import MemoryManager
 from agent.core.model_router import ModelRouter
 from agent.core.screen_observer import _notify_approval_toast
 from agent.core.tool_registry import ToolRegistry
+from agent.core.voice.session import get_session
 from agent.core.voice.stt import SpeechToText
 from agent.core.voice.tts import TextToSpeech
 
@@ -32,6 +33,35 @@ except ImportError:
 
     def _unload_llm() -> None:  # type: ignore[misc]
         pass
+
+
+# Patterns for wake-word prefixes that Whisper may transcribe.
+# Ordered longest-first so "hey roamin" is tried before bare "roamin".
+_WAKE_PREFIXES = re.compile(
+    r"^(?:"
+    r"hey roamin[,.\s]*"
+    r"|hey roman[,.\s]*"
+    r"|a roamin[,.\s]*"
+    r"|a roman[,.\s]*"
+    r"|roamin[,.\s]*"
+    r"|roman[,.\s]*"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _strip_wake_prefix(text: str) -> str:
+    """Remove a leading wake-word prefix from the STT transcription.
+
+    Whisper sometimes captures the trigger phrase that OpenWakeWord already
+    consumed (e.g. "Hey Roamin, search drones") or mishears it as
+    "A Roman" / "Hey Roman".  Strip it so the rest of the pipeline sees
+    only the user's actual command.
+    """
+    cleaned = _WAKE_PREFIXES.sub("", text).strip()
+    # If stripping left nothing (user just said "Hey Roamin" with no command),
+    # return the original so the empty-check downstream handles it.
+    return cleaned if cleaned else text
 
 
 def _make_request_fingerprint(transcription: str) -> str:
@@ -212,7 +242,7 @@ def _detect_model_override(transcription: str) -> tuple[str | None, str, str | N
             cleaned = " ".join(rest).strip()
             if cleaned:
                 print(
-                    f"[Roamin] Fuzzy model match: '{candidate}' → '{matched_token}' " f"(cutoff={_FUZZY_MODEL_CUTOFF})"
+                    f"[Roamin] Fuzzy model match: '{candidate}' -> '{matched_token}' " f"(cutoff={_FUZZY_MODEL_CUTOFF})"
                 )
                 return capability, cleaned, model_name
 
@@ -252,13 +282,27 @@ def _try_direct_dispatch(transcription: str, registry: ToolRegistry) -> dict | N
         "mem palace status",
         "what's in the palace",
         "what is in the palace",
+        "what's in the mem palace",
+        "what is in the mem palace",
+        "what's in the mempalace",
+        "what is in the mempalace",
         "what's inside the palace",
         "what is inside the palace",
         "show me the palace",
+        "show me the mem palace",
         "show palace",
         "palace contents",
         "what's stored in the palace",
         "what is stored in the palace",
+        "summarize the palace",
+        "summarize the mem palace",
+        "summarize the mempalace",
+        "summarize palace",
+        "summarize mem palace",
+        "last entries in the palace",
+        "last entries in the mem palace",
+        "recent entries in the palace",
+        "recent entries in the mem palace",
     ]
     if any(t in lower for t in _PALACE_STATUS_TRIGGERS):
         print("[Roamin] Direct dispatch: mempalace_status()")
@@ -509,57 +553,16 @@ class WakeListener:
         thread.start()
 
     def _extract_and_store_fact(self, transcription: str, memory: MemoryManager) -> bool:
-        """Detect 'remember X is Y' patterns and store as named_fact. Returns True if fact stored."""
-        lower = transcription.lower()
-        patterns = [
-            r"remember (?:that )?my (.+?) is (.+)",
-            r"my (.+?) is (.+)",
-            r"save (?:that )?my (.+?) is (.+)",
-            r"note (?:that )?my (.+?) is (.+)",
-        ]
-        for pattern in patterns:
-            m = re.search(pattern, lower)
-            if m:
-                fact_name = m.group(1).strip().rstrip(".")
-                fact_value = m.group(2).strip().rstrip(".")
-                try:
-                    memory.write_to_memory("named_fact", {"fact_name": fact_name, "value": fact_value})
-                    print(f"[Roamin] Stored fact: '{fact_name}' = '{fact_value}'")
-                    return True
-                except Exception as e:
-                    print(f"[Warning] Failed to store fact: {e}")
-        return False
+        """Delegate to ``chat_engine.extract_and_store_fact``."""
+        from agent.core.chat_engine import extract_and_store_fact
+
+        return extract_and_store_fact(transcription, memory)
 
     def _build_memory_context(self, transcription: str, memory: MemoryManager) -> str:
-        """Query memory and build a context string to inject into the reply prompt."""
-        context_parts = []
+        """Delegate to ``chat_engine.build_memory_context``."""
+        from agent.core.chat_engine import build_memory_context
 
-        # Search ChromaDB for semantically related memories
-        try:
-            results = memory.search_memory(transcription)
-            docs = results.get("documents", [])
-            if docs:
-                context_parts.append("Relevant memories: " + " | ".join(docs[:3]))
-        except Exception:
-            pass
-
-        # Pull all named facts — only inject ones relevant to this query
-        facts = []
-        try:
-            from agent.core.memory.memory_store import MemoryStore
-
-            store = MemoryStore()
-            facts = store.get_all_named_facts() if hasattr(store, "get_all_named_facts") else []
-        except Exception:
-            pass
-        if facts:
-            lower_query = transcription.lower()
-            relevant = [f for f in facts if f["fact_name"].lower() in lower_query]
-            if relevant:
-                fact_strs = [f"{f['fact_name']}: {f['value']}" for f in relevant]
-                context_parts.append("Known facts about the user: " + ", ".join(fact_strs))
-
-        return "\n".join(context_parts)
+        return build_memory_context(transcription, memory)
 
     def _on_wake(self) -> None:
         """Handle wake word trigger: listen for command and execute."""
@@ -584,12 +587,18 @@ class WakeListener:
         except Exception as e:
             print(f"[Warning] STT error: {e}", flush=True)
         t_stt = time.perf_counter()
-        print(f"[Roamin] t={t_stt - t0:.3f}s  STT done (+{t_stt - t_greeted:.3f}s) → '{transcription}'", flush=True)
+        print(f"[Roamin] t={t_stt - t0:.3f}s  STT done (+{t_stt - t_greeted:.3f}s) -> '{transcription}'", flush=True)
 
         if transcription is None or transcription.strip() == "":
             if tts.is_available():
                 tts.speak("Sorry, I didn't catch that.")
             return
+
+        # Strip wake word prefix — Whisper sometimes transcribes the wake
+        # word trigger ("Hey Roamin", "Roamin,") or mishears it as
+        # "A Roman", "Hey Roman", etc.  Remove it so downstream processing
+        # sees only the user's actual command.
+        transcription = _strip_wake_prefix(transcription)
 
         # Deduplication: suppress identical transcriptions within TTL window
         _fp = _make_request_fingerprint(transcription)
@@ -602,6 +611,18 @@ class WakeListener:
                 return
             self._pending_fingerprint = _fp
             self._last_fingerprint_time = _now_fp
+
+        # Session continuity — track exchanges + handle "new conversation" command
+        session = get_session()
+        _lower = transcription.strip().lower()
+        if _lower in ("new conversation", "start over", "reset conversation", "fresh start"):
+            session.reset(reason="voice_command")
+            if tts.is_available():
+                tts.speak("Starting fresh. What's up?")
+            return
+
+        # Add user message to session transcript
+        session.add("user", transcription)
 
         # Memory — extract facts and build context before AgentLoop
         memory = MemoryManager()
@@ -668,7 +689,7 @@ class WakeListener:
                     t_reply = time.perf_counter()
                     print(
                         f"[Roamin] t={t_reply - t0:.3f}s  Reply generated "
-                        f"(+{t_reply - t_dispatch:.3f}s) \u2192 '{vision_reply}'"
+                        f"(+{t_reply - t_dispatch:.3f}s) -> '{vision_reply}'"
                     )
                     if tts.is_available():
                         tts.speak(vision_reply)
@@ -728,6 +749,7 @@ class WakeListener:
                         transcription,
                         include_screen=include_screen,
                         on_progress=_progress_handler,
+                        session_context=session.get_context_block(),
                     )
                 finally:
                     self._agent_running_event.clear()
@@ -743,10 +765,6 @@ class WakeListener:
             )
 
             status = result.get("status", "unknown")
-            if status == "failed":
-                if tts.is_available():
-                    tts.speak("I couldn't complete that task.")
-                return
             if status == "cancelled":
                 if tts.is_available():
                     tts.speak("Got it, stopping.")
@@ -756,6 +774,8 @@ class WakeListener:
                     tts.speak("That requires your approval. Check your notifications.")
                 _handle_blocked_steps(result.get("blocked_steps", []), memory)
                 return
+            # status == "failed": do NOT return — fall through to ModelRouter so
+            # conversational queries ("what is X?", "who are you?") still get answered.
 
             # Collect tool outputs from executed steps (skip null-tool reasoning steps)
             tool_outputs = []
@@ -774,6 +794,33 @@ class WakeListener:
 
             tool_context = "\n".join(tool_outputs)[:1500]
 
+        # MemPalace fallback — if direct dispatch didn't catch it and AgentLoop
+        # didn't produce useful tool output, try MemPalace directly.
+        _mp_triggers = ["palace", "mempalace", "mem palace", "memory search", "search my mem"]
+        if any(t in transcription.lower() for t in _mp_triggers) and not tool_context:
+            try:
+                _lower_mp = transcription.lower()
+                # Overview queries ("what's in the palace", "summarize entries")
+                # → use mempalace_status which returns all stored entries
+                _overview_words = ["what", "summarize", "summary", "entries", "show", "list", "contents", "status"]
+                if any(w in _lower_mp for w in _overview_words):
+                    _mp_result = registry.execute("mempalace_status", {})
+                else:
+                    # Specific search query — strip noise words for cleaner matching
+                    _clean_query = re.sub(
+                        r"\b(?:palace|mempalace|mem palace|search|find|look up|tell me about|what is|what are)\b",
+                        "",
+                        _lower_mp,
+                    ).strip()
+                    _mp_result = registry.execute("mempalace_search", {"query": _clean_query or transcription})
+
+                _mp_ok = _mp_result and (_mp_result.get("ok") or _mp_result.get("success"))
+                if _mp_ok and _mp_result.get("result"):
+                    tool_context = f"[mempalace]: {str(_mp_result['result'])[:1500]}"
+                    print(f"[Roamin] MemPalace context injected for voice query: {transcription[:60]}")
+            except Exception as _mp_err:
+                print(f"[Warning] MemPalace voice search failed: {_mp_err}")
+
         # Generate reply with tool results and memory context injected
         reply = "Got it." if fact_stored else "Done."
         try:
@@ -785,29 +832,11 @@ class WakeListener:
             if model_override:
                 print(f"[Roamin] Model override: {override_name} (capability: {model_override})")
 
-            if tool_context:
-                system_content = (
-                    "You are Roamin, a voice assistant. "
-                    "Tool results are provided below — use them to answer the user directly. "
-                    "Reply in ONE short spoken sentence. No lists, no narration."
-                    f"\n\nTool results:\n{tool_context}"
-                )
-            else:
-                system_content = (
-                    "You are Roamin, a voice assistant. "
-                    "Reply in ONE short sentence, spoken naturally. "
-                    "No narration, no lists, no internal state. "
-                    "Just a direct natural reply."
-                )
-            if memory_context:
-                system_content += f"\n\n{memory_context}"
+            # Two-layer system prompt: task instructions + Roamin sidecar context
+            from agent.core.chat_engine import build_sidecar_context
 
             # Use cleaned transcription (trigger phrase stripped) in prompt
             prompt_text = clean_text if model_override else transcription
-            messages = [
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": prompt_text},
-            ]
             no_think, think_max_tokens = _classify_think_level(transcription)
 
             # Model override: apply per-capability minimum token floor.
@@ -820,25 +849,44 @@ class WakeListener:
 
             if tool_context and think_max_tokens < 200:
                 think_max_tokens = 200
-            stream_think = not no_think  # Stream thinking to terminal when think mode is active
+            stream_think = not no_think
             if stream_think and task_type not in ("reasoning", "code"):
-                # Default/chat model won't generate <think> tags — route to reasoning model
                 task_type = "reasoning"
 
-            # Think-tier queries get a system prompt that allows detailed responses
+            # Layer 1: Task instructions (short, lets model use its training)
             if not no_think and not tool_context:
-                system_content = (
-                    "You are Roamin, a voice assistant. "
-                    "The user wants a thoughtful, detailed response. "
-                    "Give a thorough answer in natural spoken language. "
+                # Think-tier: allow multi-sentence thoughtful response
+                layer1 = (
+                    "The user wants a thoughtful response. "
+                    "Answer thoroughly in natural spoken language. "
                     "You may use multiple sentences. No markdown, no lists."
                 )
-                if memory_context:
-                    system_content += f"\n\n{memory_context}"
-                messages = [
-                    {"role": "system", "content": system_content},
-                    {"role": "user", "content": prompt_text},
-                ]
+            elif tool_context:
+                layer1 = (
+                    "Tool results are provided below. Use them to answer the user directly. "
+                    "Reply in ONE short spoken sentence. Plain text only.\n\n"
+                    f"Tool results:\n{tool_context}"
+                )
+            else:
+                layer1 = (
+                    "Reply in one natural spoken sentence. Plain text only. "
+                    "No lists, no narration, no internal state."
+                )
+
+            # Layer 2: Roamin sidecar (persona + context)
+            # NOTE: MemPalace data is already in tool_context (layer1) when present.
+            # Don't double-inject it into the sidecar — wastes tokens and confuses model.
+            layer2 = build_sidecar_context(
+                memory_context=memory_context,
+                mempalace_context="",
+                session_context=session.get_context_block(),
+            )
+
+            system_content = f"{layer1}\n\n{layer2}"
+            messages = [
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": prompt_text},
+            ]
 
             print(
                 f"[Roamin] Think level: no_think={no_think}, max_tokens={think_max_tokens}"
@@ -849,13 +897,19 @@ class WakeListener:
                 prompt_text,
                 messages=messages,
                 max_tokens=think_max_tokens,
-                temperature=0.6 if not no_think else 0.7,
+                temperature=0.3 if not no_think else 0.2,  # low temp = less hallucination
                 no_think=no_think,
                 stream_think=stream_think,
             )
+            # Strip reasoning blocks and markdown — same pipeline as chat_engine.py
             reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+            reply = re.sub(r"</?[\w]+>", "", reply).strip()
+            reply = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", reply)
+            reply = re.sub(r"_{1,2}(.+?)_{1,2}", r"\1", reply)
+            reply = re.sub(r"^#{1,6}\s+", "", reply, flags=re.MULTILINE)
+            reply = re.sub(r"^\s*[-*]\s+", "", reply, flags=re.MULTILINE)
+            reply = re.sub(r"\n{3,}", "\n\n", reply).strip()
             reply = re.sub(r"[^\x00-\x7F]+", "", reply).strip()
-            reply = re.sub(r"</?[\w]*>?\s*$", "", reply).strip()  # strip trailing partial tags (</s>, </, </think>)
             # Think-tier: let model finish its full output; OFF-tier: keep voice replies short
             if no_think:
                 reply = reply[:200] if reply else ("Got it." if fact_stored else "Done.")
@@ -864,7 +918,7 @@ class WakeListener:
         except Exception:
             reply = "Got it." if fact_stored else "Done."
         t_reply = time.perf_counter()
-        print(f"[Roamin] t={t_reply - t0:.3f}s  Reply generated (+{t_reply - t_stt:.3f}s) → '{reply}'")
+        print(f"[Roamin] t={t_reply - t0:.3f}s  Reply generated (+{t_reply - t_stt:.3f}s) -> '{reply}'")
 
         # Unload LLM before TTS — frees VRAM so Chatterbox can synthesize without contention
         _unload_llm()
@@ -879,12 +933,18 @@ class WakeListener:
         # Show approval toasts for any blocked steps (non-fatal)
         _handle_blocked_steps(result.get("blocked_steps", []) if result else [], memory)
 
-        # Store conversation in memory
+        # Store assistant reply in session transcript
+        try:
+            session.add("assistant", reply)
+        except Exception:
+            pass
+
+        # Store conversation in memory (uses session ID instead of hardcoded value)
         try:
             model_label = override_name or "Qwen3-VL-8B"
             memory.write_to_memory(
                 "conversation",
-                {"session_id": "voice_interface", "model_used": model_label, "content": f"User: {transcription}"},
+                {"session_id": session.session_id, "model_used": model_label, "content": f"User: {transcription}"},
             )
         except Exception:
             pass

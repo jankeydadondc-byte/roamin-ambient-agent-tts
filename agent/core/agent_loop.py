@@ -52,6 +52,7 @@ class AgentLoop:
         goal: str,
         include_screen: bool = False,
         on_progress: Callable[[dict], None] | None = None,
+        session_context: str | None = None,
     ) -> dict:
         """
         Execute a goal.
@@ -59,6 +60,7 @@ class AgentLoop:
         Args:
             goal: Natural language goal
             include_screen: Whether to capture screen before planning
+            session_context: Optional session transcript for conversation continuity
 
         Returns:
             dict with keys: goal, status, steps, blocked_steps, stored
@@ -99,7 +101,9 @@ class AgentLoop:
                 screen_obs = {"error": "screen observation failed"}
 
         # Build context — pass self._registry so plugin tools appear in the tool list
-        context = self._context_builder.build(goal, screen_observation=screen_obs, registry=self._registry)
+        context = self._context_builder.build(
+            goal, screen_observation=screen_obs, registry=self._registry, session_context=session_context
+        )
 
         # Generate plan from model
         if on_progress:

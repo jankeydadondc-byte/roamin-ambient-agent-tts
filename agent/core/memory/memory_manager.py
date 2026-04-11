@@ -128,12 +128,42 @@ class MemoryManager:
 
     def query_tasks(
         self,
-        limit: int = 50,
+        limit: int = 20,
+        page: int = 1,
         status: str | None = None,
         since: str | None = None,
+        task_type: str | None = None,
         keyword: str | None = None,
-    ) -> list[dict]:
-        """Query task history with optional filters."""
+    ) -> dict:
+        """Query task history with optional filters and pagination.
+
+        Returns dict with keys: tasks, total, page, per_page, pages.
+        """
         if keyword:
-            return self.store.search_task_history(keyword)
-        return self.store.get_task_runs(limit=limit, status=status, since=since)
+            tasks = self.store.search_task_history(keyword)
+            return {
+                "tasks": tasks,
+                "total": len(tasks),
+                "page": 1,
+                "per_page": len(tasks),
+                "pages": 1,
+            }
+        offset = (page - 1) * limit
+        tasks = self.store.get_task_runs(
+            limit=limit,
+            offset=offset,
+            status=status,
+            since=since,
+            task_type=task_type,
+        )
+        total = self.store.count_task_runs(status=status, since=since, task_type=task_type)
+        import math
+
+        pages = max(1, math.ceil(total / limit)) if limit else 1
+        return {
+            "tasks": tasks,
+            "total": total,
+            "page": page,
+            "per_page": limit,
+            "pages": pages,
+        }
