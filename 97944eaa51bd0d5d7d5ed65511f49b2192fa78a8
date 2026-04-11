@@ -1,0 +1,1 @@
+STATUS: Stable but needs refinement. Core pipeline (STT, MemPalace voice/chat, plugin loading) is working. Voice and chat return consistent data. STT no longer mangles wake words. Next: cleanup remaining unstaged changes, .gitignore for node_modules/build artifacts, and iterative UX polish.
