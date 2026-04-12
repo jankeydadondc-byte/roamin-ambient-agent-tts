@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { connectEvents, getModels, getPlugins, getStatus, getTaskHistory } from "./apiClient";
+import { connectEvents, getModels, getPlugins, getStatus, getTaskHistory, setApiKey } from "./apiClient";
 import Header from "./components/Header";
+import Help from "./components/Help";
 import ModelSelect from "./components/ModelSelect";
 import PluginActions from "./components/PluginActions";
 import PluginDetail from "./components/PluginDetail";
@@ -39,6 +40,10 @@ export default function App() {
     // Initialize on mount - load all state
     // ==========================================
     useEffect(() => {
+        // Wire API key from localStorage so auth headers are sent correctly (#84 #85)
+        const storedKey = localStorage.getItem("roamin_api_key");
+        if (storedKey) setApiKey(storedKey);
+
         (async () => {
             try {
                 const s = await getStatus();
@@ -247,6 +252,11 @@ export default function App() {
                             <div className="vscode-card">
                                 <PluginDetail plugin={selected} onUpdated={() => refreshPlugins()} />
                             </div>
+                        </section>
+
+                        <section id="help" style={{ marginTop: 12 }} aria-labelledby="help-heading">
+                            <h3 id="help-heading">Help</h3>
+                            <Help />
                         </section>
                     </div>
                 </div>

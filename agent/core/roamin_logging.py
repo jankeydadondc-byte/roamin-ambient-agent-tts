@@ -150,11 +150,13 @@ def log_with_context(msg: str, context: dict[str, Any] | None = None) -> None:
         msg: Message to log
         context: Optional dictionary of context data
     """
+    # Build formatted string and actually emit it (#90 — previously discarded into _)
     if context:
         context_str = " ".join([f"{k}={v}" for k, v in context.items()])
-        _ = f"{msg} [{context_str}]"  # noqa: F841
+        formatted = f"{msg} [{context_str}]"
     else:
-        _ = msg  # noqa: F841
+        formatted = msg
+    logging.getLogger("roamin.context").info(formatted)
 
 
 def get_log_directory() -> Path:

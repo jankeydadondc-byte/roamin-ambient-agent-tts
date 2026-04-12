@@ -10,7 +10,7 @@
 # NOTE: mempalace requires chromadb<0.7 but chromadb 0.6.x is broken on Python 3.14
 # (pydantic v1 incompatibility). Using chromadb 1.5.5 — mempalace search degrades
 # gracefully until the upstream mempalace chromadb constraint is updated.
-chromadb>=0.5.0
+chromadb>=1.5.5
 mempalace
 
 # --- Voice ---
@@ -21,9 +21,13 @@ keyboard>=0.13.5
 
 # --- Screen observation ---
 Pillow>=10.0.0
+pytesseract>=0.3.10
 
 # --- Voice Activity Detection ---
 silero-vad>=5.1.2
+
+# --- Wake Word Detection ---
+openwakeword>=0.6.0
 
 # --- HTTP (model fallback) ---
 requests>=2.31.0
@@ -38,6 +42,8 @@ psutil>=5.9.0
 # --- Windows ---
 pywin32>=306
 winotify>=1.1.0
+pystray>=0.19.0          # System tray icon + right-click context menu
+Pillow>=10.0.0           # Already required; pystray uses it for icon images
 
 # --- LM Studio SDK ---
 lmstudio>=1.5.0

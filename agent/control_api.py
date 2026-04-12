@@ -29,6 +29,17 @@ from agent.core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
+# Eviction limit for in-memory task list — prevents unbounded growth (#88)
+_TASK_EVICT_LIMIT = 500
+
+
+def _append_task(task: dict[str, Any]) -> None:
+    """Append a task entry and evict the oldest half when over the limit."""
+    app.state.tasks.append(task)
+    if len(app.state.tasks) > _TASK_EVICT_LIMIT:
+        keep = _TASK_EVICT_LIMIT // 2
+        app.state.tasks = app.state.tasks[-keep:]
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -321,7 +332,7 @@ async def plugin_action(plugin_id: str, body: dict[str, Any]) -> dict[str, Any]:
             if action in ("enable", "disable"):
                 p["enabled"] = action == "enable"
             # restart: toggle off then on (status remains enabled)
-            app.state.tasks.append(
+            _append_task(
                 {
                     "id": f"plugin-action-{int(time.time()*1000)}",
                     "type": action,
@@ -356,7 +367,7 @@ async def _simulate_install(payload: dict[str, Any], task_id: str) -> None:
         "manifest": payload.get("manifest") or {},
     }
     app.state.plugins.append(plugin)
-    app.state.tasks.append(
+    _append_task(
         {
             "id": task_id,
             "type": "install",
@@ -567,7 +578,7 @@ async def control_action(action: str) -> dict[str, Any]:
         "status": "accepted",
         "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
-    app.state.tasks.append(task)
+    _append_task(task)
     await _broadcast({"type": "task_update", "data": {"task_id": task["id"], "status": "running"}})
     return {"result": "accepted", "action": action}
 

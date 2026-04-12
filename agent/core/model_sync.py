@@ -8,6 +8,8 @@ import logging
 import os
 import re
 import string
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from pathlib import Path
 
 _CONFIG_PATH = Path(__file__).parent / "model_config.json"
@@ -53,6 +55,26 @@ _SCAN_DIR_SKIP: frozenset[str] = frozenset(
         "site-packages",
     }
 )
+
+# Directory names (any path component, case-insensitive) that must never be
+# recurse-scanned — prevents rglob from entering the project itself, forbidden
+# sub-projects, and virtualenvs (#19).
+_RGLOB_EXCLUSIONS: frozenset[str] = frozenset(
+    {
+        "roamin-ambient-agent-tts",
+        ".venv",
+        ".venv_external",
+        "n.e.k.o.",
+        "framework",
+        "node_modules",
+        "__pycache__",
+        ".git",
+        "site-packages",
+    }
+)
+
+# Timeout in seconds for scanning a single drive during _drive_walk() (#20)
+_DRIVE_SCAN_TIMEOUT: float = 3.0
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +196,21 @@ def _discover_ollama_blobs() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _rglob_safe(base: Path) -> list[Path]:
+    """rglob '*.gguf' under *base*, skipping excluded directories (#19).
+
+    Prevents recursing into the project itself, forbidden sub-projects, and
+    virtualenvs that happen to sit inside a scan root like C:/AI.
+    """
+    results: list[Path] = []
+    for p in base.rglob("*.gguf"):
+        # Skip if any component of the path (lowercased) is in the exclusion set
+        if any(part.lower() in _RGLOB_EXCLUSIONS for part in p.parts):
+            continue
+        results.append(p)
+    return results
+
+
 def _scan_dir_for_ggufs(directory: Path) -> list[Path]:
     """Return all .gguf files in directory (non-recursive), skipping mmproj files."""
     results: list[Path] = []
@@ -229,8 +266,22 @@ def _drive_walk(extra_dirs: list[Path], max_depth: int = 5) -> list[Path]:
             pass
 
     drives = [Path(f"{letter}:/") for letter in string.ascii_uppercase if Path(f"{letter}:/").exists()]
-    for drive in drives:
+
+    # Scan each drive with a per-drive timeout — prevents blocking on network
+    # drives or removable media that hang at startup (#20)
+    def _scan_drive(drive: Path) -> list[Path]:
         _recurse(drive, 0)
+        return results  # shared list — caller collects after all futures complete
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(_recurse, drive, 0): drive for drive in drives}
+        for fut, drive in futures.items():
+            try:
+                fut.result(timeout=_DRIVE_SCAN_TIMEOUT)
+            except FuturesTimeout:
+                logger.debug("[model_sync] Drive %s: scan timeout, skipped", drive)
+            except Exception as exc:
+                logger.debug("[model_sync] Drive %s: scan error: %s", drive, exc)
 
     return results
 
@@ -242,9 +293,9 @@ def _discover_filesystem(config: dict) -> list[dict]:
     seen_paths: set[Path] = set()
     raw_paths: list[Path] = []
 
-    # Well-known dirs + user-configured dirs (no depth limit)
+    # Well-known dirs + user-configured dirs — use _rglob_safe to skip forbidden dirs (#19)
     for scan_root in _WELL_KNOWN_SCAN_DIRS + extra_dirs:
-        for p in scan_root.rglob("*.gguf"):
+        for p in _rglob_safe(scan_root):
             if "mmproj" in p.name.lower():
                 continue
             resolved = p.resolve()

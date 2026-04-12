@@ -2,7 +2,8 @@ schema: 1
 id: v14-p2-reliability
 title: "P2 Reliability Remediation — Data Integrity, Config, Infrastructure & Pipeline"
 created: "2026-04-12"
-status: active
+status: complete
+completed: "2026-04-12"
 source_audit: v12-code-triage-audit
 
 priority: high

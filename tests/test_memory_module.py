@@ -8,6 +8,7 @@ import chromadb
 import pytest
 
 from agent.core.memory.memory_manager import MemoryManager
+from agent.core.memory.memory_search import ChromaMemorySearch
 from agent.core.memory.memory_store import MemoryStore
 
 
@@ -148,17 +149,28 @@ class TestMemoryManager:
         assert len(rows) == 5
 
 
+@pytest.fixture
+def chroma_search(tmp_path):
+    return ChromaMemorySearch(db_path=str(tmp_path / "chroma_test"))
+
+
 class TestChromaSearch:
-    def test_index_and_search(self):
-        search = EphemeralChromaMemorySearch()
-        search.index_data(
+    def test_index_and_search(self, chroma_search):
+        chroma_search.index_data(
             ["Roamin is an AI agent", "The user works on os_agent daily"], [{"source": "test"}, {"source": "test"}]
         )
-        results = search.search("AI agent")
+        results = chroma_search.search("AI agent")
         assert len(results["documents"]) > 0
 
-    def test_empty_search_returns_structure(self):
-        search = EphemeralChromaMemorySearch()
-        results = search.search("anything")
+    def test_empty_search_returns_structure(self, chroma_search):
+        results = chroma_search.search("anything")
         assert "documents" in results
         assert "metadatas" in results
+
+    def test_doc_counter_no_collision_on_second_index(self, chroma_search):
+        """index_data() called twice on same instance must not raise IDAlreadyExistsError (#104)."""
+        chroma_search.index_data(["first batch"], [{"source": "test"}])
+        # Second call reuses the same instance — _doc_counter must continue from collection.count()
+        chroma_search.index_data(["second batch"], [{"source": "test"}])
+        results = chroma_search.search("batch")
+        assert len(results["documents"]) > 0
