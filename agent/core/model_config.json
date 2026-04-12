@@ -19,7 +19,7 @@
         "planning",
         "json_output"
       ],
-      "context_window": 8192,
+      "context_window": 32768,
       "always_available": true,
       "notes": "Unified default model: chat + vision + fast. Abliterated (uncensored). Q4_K_M quantization."
     },
@@ -145,8 +145,7 @@
       ],
       "context_window": 32768,
       "always_available": false,
-      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Ministral-3-14B-Reasoning-2512-GGUF\\Ministral-3-14B-Reasoning-2512-Q4_K_M.gguf",
-      "mmproj_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Ministral-3-14B-Reasoning-2512-GGUF\\mmproj-Ministral-3-14B-Reasoning-2512-F16.gguf"
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Ministral-3-14B-Reasoning-2512-GGUF\\Ministral-3-14B-Reasoning-2512-Q4_K_M.gguf"
     },
     {
       "id": "qwen2-5-coder-14b-instruct-q4-k-m",
@@ -351,38 +350,6 @@
       "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\Gapeleon\\DeepSeek-R1-0528-CODER-DRAFT-0.6B-v1.0-Q4_K_M-GGUF\\deepseek-r1-0528-coder-draft-0.6b-v1.0-q4_k_m.gguf"
     },
     {
-      "id": "net-q4",
-      "name": "net.Q4",
-      "provider": "llama_cpp",
-      "model_id": "net.Q4",
-      "endpoint": "local://llama_cpp",
-      "capabilities": [
-        "fast",
-        "general",
-        "chat"
-      ],
-      "context_window": 32768,
-      "always_available": false,
-      "file_path": "C:\\AI\\roamin-ambient-agent-tts\\.pytest_tmp\\test_mmproj_file_not_included_0\\models\\net.Q4.gguf",
-      "mmproj_path": "C:\\AI\\roamin-ambient-agent-tts\\.pytest_tmp\\test_mmproj_file_not_included_0\\models\\net.mmproj.gguf"
-    },
-    {
-      "id": "my-model-q4-k-m",
-      "name": "my-model.Q4_K_M",
-      "provider": "llama_cpp",
-      "model_id": "my-model.Q4_K_M",
-      "endpoint": "local://llama_cpp",
-      "capabilities": [
-        "fast",
-        "general",
-        "chat"
-      ],
-      "context_window": 32768,
-      "always_available": false,
-      "file_path": "C:\\AI\\roamin-ambient-agent-tts\\.pytest_tmp\\test_gguf_file_included_with_m0\\models\\my-model.Q4_K_M.gguf",
-      "mmproj_path": "C:\\AI\\roamin-ambient-agent-tts\\.pytest_tmp\\test_gguf_file_included_with_m0\\models\\my-model.mmproj-Q8_0.gguf"
-    },
-    {
       "id": "kimi-k2-5-ud-tq1-0-00001-of-00005",
       "name": "Kimi-K2.5-UD-TQ1_0-00001-of-00005",
       "provider": "llama_cpp",
@@ -398,10 +365,10 @@
       "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\unsloth\\Kimi-K2.5-GGUF\\Kimi-K2.5-UD-TQ1_0-00001-of-00005.gguf"
     },
     {
-      "id": "kimi-k2-5-ud-tq1-0-00002-of-00005",
-      "name": "Kimi-K2.5-UD-TQ1_0-00002-of-00005",
+      "id": "novaciano-sex-roleplay-v3-3-2-1b-f16-q4-k-m",
+      "name": "Novaciano-SEX_ROLEPLAY_V3-3.2-1B.F16.Q4_K_M",
       "provider": "llama_cpp",
-      "model_id": "Kimi-K2.5-UD-TQ1_0-00002-of-00005",
+      "model_id": "Novaciano-SEX_ROLEPLAY_V3-3.2-1B.F16.Q4_K_M",
       "endpoint": "local://llama_cpp",
       "capabilities": [
         "fast",
@@ -410,13 +377,13 @@
       ],
       "context_window": 32768,
       "always_available": false,
-      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\unsloth\\Kimi-K2.5-GGUF\\Kimi-K2.5-UD-TQ1_0-00002-of-00005.gguf"
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\ramgpt\\Novaciano-SEX_ROLEPLAY_V3-3.2-1B-GGUF-Q4_K_M\\Novaciano-SEX_ROLEPLAY_V3-3.2-1B.F16.Q4_K_M.gguf"
     },
     {
-      "id": "kimi-k2-5-ud-tq1-0-00003-of-00005",
-      "name": "Kimi-K2.5-UD-TQ1_0-00003-of-00005",
+      "id": "qwen3-5-9b-uncensored-hauhaucs-aggressive-q4-k-m",
+      "name": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M",
       "provider": "llama_cpp",
-      "model_id": "Kimi-K2.5-UD-TQ1_0-00003-of-00005",
+      "model_id": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M",
       "endpoint": "local://llama_cpp",
       "capabilities": [
         "fast",
@@ -425,37 +392,42 @@
       ],
       "context_window": 32768,
       "always_available": false,
-      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\unsloth\\Kimi-K2.5-GGUF\\Kimi-K2.5-UD-TQ1_0-00003-of-00005.gguf"
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\HauhauCS\\Qwen3.5-9B-Uncensored-HauhauCS-Aggressive\\Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf",
+      "mmproj_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\HauhauCS\\Qwen3.5-9B-Uncensored-HauhauCS-Aggressive\\mmproj-Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-BF16.gguf"
     },
     {
-      "id": "kimi-k2-5-ud-tq1-0-00005-of-00005",
-      "name": "Kimi-K2.5-UD-TQ1_0-00005-of-00005",
+      "id": "qwen2-5-coder-32b-instruct-q4-k-l",
+      "name": "Qwen2.5-Coder-32B-Instruct-Q4_K_L",
       "provider": "llama_cpp",
-      "model_id": "Kimi-K2.5-UD-TQ1_0-00005-of-00005",
+      "model_id": "Qwen2.5-Coder-32B-Instruct-Q4_K_L",
       "endpoint": "local://llama_cpp",
       "capabilities": [
+        "code",
+        "json_output",
         "fast",
         "general",
         "chat"
       ],
       "context_window": 32768,
       "always_available": false,
-      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\unsloth\\Kimi-K2.5-GGUF\\Kimi-K2.5-UD-TQ1_0-00005-of-00005.gguf"
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\bartowski\\Qwen2.5-Coder-32B-Instruct-GGUF\\Qwen2.5-Coder-32B-Instruct-Q4_K_L.gguf"
     },
     {
-      "id": "kimi-k2-5-ud-tq1-0-00004-of-00005",
-      "name": "Kimi-K2.5-UD-TQ1_0-00004-of-00005",
+      "id": "qwen2-5-coder-32b-instruct-q4-k-s",
+      "name": "Qwen2.5-Coder-32B-Instruct-Q4_K_S",
       "provider": "llama_cpp",
-      "model_id": "Kimi-K2.5-UD-TQ1_0-00004-of-00005",
+      "model_id": "Qwen2.5-Coder-32B-Instruct-Q4_K_S",
       "endpoint": "local://llama_cpp",
       "capabilities": [
+        "code",
+        "json_output",
         "fast",
         "general",
         "chat"
       ],
       "context_window": 32768,
       "always_available": false,
-      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\unsloth\\Kimi-K2.5-GGUF\\Kimi-K2.5-UD-TQ1_0-00004-of-00005.gguf"
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\bartowski\\Qwen2.5-Coder-32B-Instruct-GGUF\\Qwen2.5-Coder-32B-Instruct-Q4_K_S.gguf"
     }
   ],
   "routing_rules": {

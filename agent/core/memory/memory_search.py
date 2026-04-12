@@ -11,11 +11,18 @@ class ChromaMemorySearch:
         # Ensure directory exists before initializing PersistentClient
         Path(self.db_path).mkdir(parents=True, exist_ok=True)
         try:
-            self.client = chromadb.PersistentClient(path=self.db_path)
+            # Production path: allow_reset=False prevents accidental client.reset() (#76)
+            self.client = chromadb.PersistentClient(
+                path=self.db_path,
+                settings=chromadb.Settings(allow_reset=False),
+            )
         except Exception:
-            self.client = chromadb.PersistentClient(path=self.db_path, settings=chromadb.Settings(allow_reset=True))
+            # Fallback: older chromadb versions may not accept settings kwarg
+            self.client = chromadb.PersistentClient(path=self.db_path)
         self.collection = self.client.get_or_create_collection(name="roamin_memory")
-        self._doc_counter = 0
+        # Seed counter from existing collection size so IDs never collide on
+        # re-instantiation after the first session (#74)
+        self._doc_counter = self.collection.count()
 
     def index_data(self, texts: list[str], metadatas: list[dict] | None = None):
         if metadatas is None:
@@ -29,7 +36,13 @@ class ChromaMemorySearch:
         self.collection.add(documents=texts, metadatas=metadatas, ids=ids)
 
     def search(self, query_text: str, n_results: int = 3) -> dict:
-        results = self.collection.query(query_texts=[query_text], n_results=n_results)
+        # Guard against empty collection — ChromaDB raises InvalidArgumentError
+        # when n_results > collection.count() (#75)
+        count = self.collection.count()
+        if count == 0:
+            return {"documents": [], "metadatas": [], "distances": []}
+        n = min(n_results, count)
+        results = self.collection.query(query_texts=[query_text], n_results=n)
         return {
             "documents": results["documents"][0] if results["documents"] else [],
             "metadatas": results["metadatas"][0] if results["metadatas"] else [],

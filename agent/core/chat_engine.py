@@ -86,6 +86,42 @@ _FACT_PATTERNS = [
     r"note (?:that )?my (.+?) is (.+)",
 ]
 
+# Stop-words for pattern #1 (the broad "my X is Y" catch-all).
+# Complaints and status statements like "my code is broken" or "my screen is
+# black" match the pattern but are not biographical facts (#22).
+_FACT_STOP_WORDS = frozenset(
+    {
+        "code",
+        "screen",
+        "internet",
+        "wifi",
+        "computer",
+        "laptop",
+        "phone",
+        "mouse",
+        "keyboard",
+        "connection",
+        "network",
+        "battery",
+        "head",
+        "back",
+        "stomach",
+        "foot",
+        "hand",
+        "eye",
+        "problem",
+        "issue",
+        "error",
+        "bug",
+        "app",
+        "program",
+        "audio",
+        "microphone",
+        "speaker",
+        "camera",
+    }
+)
+
 
 def extract_and_store_fact(message: str, memory: MemoryManager) -> bool:
     """Detect ``my X is Y`` patterns and persist as a named_fact.
@@ -93,11 +129,15 @@ def extract_and_store_fact(message: str, memory: MemoryManager) -> bool:
     Returns ``True`` if a fact was successfully stored.
     """
     lower = message.lower()
-    for pattern in _FACT_PATTERNS:
+    for idx, pattern in enumerate(_FACT_PATTERNS):
         m = re.search(pattern, lower)
         if m:
             fact_name = m.group(1).strip().rstrip(".")
             fact_value = m.group(2).strip().rstrip(".")
+            # Pattern index 1 is the broad "my X is Y" catch-all.
+            # Skip complaint/status nouns so "my code is broken" is not stored (#22).
+            if idx == 1 and fact_name.split()[0] in _FACT_STOP_WORDS:
+                continue
             try:
                 memory.write_to_memory("named_fact", {"fact_name": fact_name, "value": fact_value})
                 logger.info("Stored fact: '%s' = '%s'", fact_name, fact_value)
@@ -329,6 +369,9 @@ def process_message(
     if session is None:
         session = get_session()
 
+    # Add current user turn so context block includes it during this call (#23)
+    session.add("user", message)
+
     memory = MemoryManager()
 
     # ── 1. Fact extraction ──
@@ -426,15 +469,21 @@ def process_message(
     if stream_think and task_type not in ("reasoning", "code"):
         task_type = "reasoning"
 
-    reply = router.respond(
-        task_type,
-        message,
-        messages=messages,
-        max_tokens=max_tokens,
-        temperature=0.4,  # Low temp = less hallucination on local models
-        no_think=no_think,
-        stream_think=stream_think,
-    )
+    try:
+        reply = router.respond(
+            task_type,
+            message,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=0.4,  # Low temp = less hallucination on local models
+            no_think=no_think,
+            stream_think=stream_think,
+        )
+    except Exception as exc:
+        # Model unreachability must not propagate as HTTP 500 — return a graceful
+        # fallback so the chat overlay shows a readable message (#25)
+        logger.error("[chat_engine] ModelRouter.respond() failed: %s", exc)
+        reply = "I can't reach my model right now. Is LM Studio running?"
 
     # ── 6. Clean up response ──
     reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()

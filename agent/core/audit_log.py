@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -95,7 +97,19 @@ def _prune_if_needed() -> None:
         # Read all lines, keep the last 60%
         lines = _LOG_PATH.read_text(encoding="utf-8").splitlines()
         keep = int(len(lines) * 0.6)
-        _LOG_PATH.write_text("\n".join(lines[-keep:]) + "\n", encoding="utf-8")
+        pruned = "\n".join(lines[-keep:]) + "\n"
+        # Atomic write: temp file → os.replace() prevents log destruction on crash (#91)
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=_LOG_PATH.parent, suffix=".tmp")
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                f.write(pruned)
+            os.replace(tmp_path, _LOG_PATH)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         logger.debug("Audit log pruned: %d -> %d entries", len(lines), keep)
     except Exception as e:
         logger.debug("Audit log prune failed (non-fatal): %s", e)

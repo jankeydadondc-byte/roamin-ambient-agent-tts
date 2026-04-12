@@ -11,6 +11,9 @@ class MemoryStore:
 
     def _initialize_db(self):
         with sqlite3.connect(self.db_path) as conn:
+            # Enable WAL mode — prevents 'database is locked' under concurrent readers/writers (#60)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -57,10 +60,24 @@ class MemoryStore:
                 """
                 CREATE TABLE IF NOT EXISTS named_facts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    fact_name TEXT NOT NULL,
+                    fact_name TEXT NOT NULL UNIQUE,
                     value TEXT NOT NULL
                 )
             """
+            )
+            # Migration: de-duplicate existing rows, then ensure unique index exists (#58)
+            cursor.execute(
+                """
+                DELETE FROM named_facts WHERE id NOT IN (
+                    SELECT MIN(id) FROM named_facts GROUP BY fact_name
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_named_facts_fact_name
+                ON named_facts (fact_name)
+                """
             )
             # --- Task history tables (Priority 6.3) ---
             cursor.execute(
@@ -168,11 +185,12 @@ class MemoryStore:
             return cursor.lastrowid
 
     def add_named_fact(self, fact_name: str, value: str) -> int:
+        # INSERT OR REPLACE gives upsert semantics — updates value for existing fact_name (#58)
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO named_facts (fact_name, value)
+                INSERT OR REPLACE INTO named_facts (fact_name, value)
                 VALUES (?, ?)
             """,
                 (fact_name, value),
@@ -182,21 +200,26 @@ class MemoryStore:
 
     # --- READ operations ---
 
-    def get_conversation_history(self, session_id: str | None = None) -> list[dict]:
+    def get_conversation_history(self, session_id: str | None = None, limit: int = 100) -> list[dict]:
+        # Add LIMIT to prevent unbounded memory reads on long-running sessions (#59)
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             if session_id:
                 cursor.execute(
                     """
-                    SELECT * FROM conversation_history WHERE session_id = ?
+                    SELECT * FROM conversation_history
+                    WHERE session_id = ?
+                    ORDER BY id DESC LIMIT ?
                 """,
-                    (session_id,),
+                    (session_id, limit),
                 )
             else:
                 cursor.execute(
                     """
                     SELECT * FROM conversation_history
-                """
+                    ORDER BY id DESC LIMIT ?
+                """,
+                    (limit,),
                 )
             columns = [column[0] for column in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]

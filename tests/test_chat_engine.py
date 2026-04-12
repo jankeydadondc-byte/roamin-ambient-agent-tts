@@ -78,6 +78,22 @@ class TestExtractAndStoreFact:
         assert result is False
         mock_memory.write_to_memory.assert_not_called()
 
+    def test_stop_word_blocks_complaint(self):
+        """'my code is broken' matches pattern but stop-word blocks storage (#22)."""
+        mock_memory = MagicMock()
+        result = extract_and_store_fact("my code is broken", mock_memory)
+
+        assert result is False
+        mock_memory.write_to_memory.assert_not_called()
+
+    def test_stop_word_does_not_block_non_stop_word_fact(self):
+        """'my favorite color is blue' uses a non-stop-word noun — stored normally."""
+        mock_memory = MagicMock()
+        result = extract_and_store_fact("my favorite color is blue", mock_memory)
+
+        assert result is True
+        mock_memory.write_to_memory.assert_called_once()
+
     def test_write_failure_returns_false(self):
         """Exception from MemoryManager is swallowed and returns False."""
         mock_memory = MagicMock()
@@ -191,9 +207,11 @@ class TestProcessMessage:
         assert result == "Here is my answer"
 
     def test_session_updated_with_reply(self):
-        """session.add('assistant', reply) is called with the final reply."""
+        """session.add is called for both the user message and the assistant reply."""
         result, mock_session, _ = self._run("what time is it?")
-        mock_session.add.assert_called_once_with("assistant", result)
+        calls = [c.args for c in mock_session.add.call_args_list]
+        assert ("user", "what time is it?") in calls
+        assert ("assistant", result) in calls
 
     def test_router_called_with_messages_list(self):
         """ModelRouter.respond() receives a messages list with system + user roles."""
@@ -298,3 +316,24 @@ class TestProcessMessageFallback:
             result = process_message("tell me something")
 
         assert result == "Done."
+
+    def test_router_exception_returns_graceful_fallback(self):
+        """ModelRouter.respond() raising must return a readable fallback, not propagate (#25)."""
+        mock_session = _make_mock_session()
+        mock_memory = MagicMock()
+        mock_memory.search_memory.return_value = {"documents": []}
+
+        mock_router = MagicMock()
+        mock_router.respond.side_effect = ConnectionError("model unreachable")
+
+        with (
+            patch("agent.core.chat_engine._get_chat_loop", return_value=_make_mock_loop()),
+            patch("agent.core.memory.MemoryManager", return_value=mock_memory),
+            patch("agent.core.model_router.ModelRouter", return_value=mock_router),
+            patch("agent.core.voice.session.get_session", return_value=mock_session),
+            patch("agent.core.memory.memory_store.MemoryStore", return_value=_make_mock_store()),
+        ):
+            result = process_message("what time is it?")
+
+        assert "model" in result.lower() or "lm studio" in result.lower()
+        assert result != "Done."
