@@ -82,7 +82,7 @@ pyyaml (already present)
 **File**: `.env.example`
 **Lines to Add**: ~10 lines
 **Effort**: ~5 minutes
-**Status**: ⏳ PENDING
+**Status**: ✅ COMPLETE
 
 **Changes Required**:
 ```bash
@@ -336,14 +336,14 @@ agent/plugins/
 
 ## Sign-Off Checklist (After Phase 1 Complete)
 
-- [ ] Plugin file compiles cleanly (`py_compile agent/plugins/mempalace.py`)
-- [ ] Flake8 passes all rules with max line length=120
-- [ ] Client module works with MemPalace unavailable (graceful degradation)
-- [ ] Configuration examples added to `.env.example`
-- [ ] Openspec documentation complete (`.openspec.yaml`, `proposal.md`, `design.md`, `tasks.md`)
-- [ ] Verification tests pass (plugin auto-discovered, tools register, no conflicts with LM Studio)
-- [ ] **NO manual wiring in run_wake_listener.py needed** ← Key difference from original thinking!
-- [ ] MASTER_CONTEXT_PACK.md updated with Phase 1 completion note
+- [x] Plugin file compiles cleanly (`py_compile agent/plugins/mempalace.py`)
+- [x] Flake8 passes all rules with max line length=120
+- [x] Graceful degradation if MemPalace unavailable (ImportError caught, palace-not-found handled)
+- [x] Configuration examples added to `.env.example`
+- [x] Openspec documentation complete
+- [x] Verification tests pass — `discover_plugins()` → `['example_ping', 'mempalace']`; tools → `['mempalace_status', 'mempalace_search']`
+- [x] **NO manual wiring in run_wake_listener.py** — auto-discovery handles it
+- [x] MASTER_CONTEXT_PACK.md updated (MemPalace Integration: ✅ COMPLETE)
 
 ---
 

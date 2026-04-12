@@ -1,0 +1,69 @@
+schema: 1
+id: v15-p1-p2-p3-reliability
+title: "P1/P2/P3 Reliability — AgentLoop, Launch, TTS, Observation, Test Hygiene"
+created: "2026-04-12"
+status: active
+source_audit: v12-code-triage-audit
+
+priority: high
+
+scope:
+  findings_targeted:
+    # P1
+    - 6    # agent_loop.py — ThreadPoolExecutor.__exit__ blocks on timed-out thread
+    # P2
+    - 2    # launch.py — no post-launch health check before success message
+    - 3    # launch.py — script paths not existence-checked before Popen
+    - 7    # agent_loop.py — status="completed" even when steps failed
+    - 18   # wake_listener.py — cancel hotkey non-functional during direct dispatch
+    - 37   # llama_backend.py — RLock held for entire model load (30-90s)
+    # P3 — code
+    - 8    # agent_loop.py — _cleanup_completed_tasks uses raw sqlite3, bypasses MemoryStore
+    - 9    # agent_loop.py — import os inside _execute_step() function body
+    - 30   # tts.py — newlines not escaped in PowerShell SAPI command string
+    - 68   # memory_search.py — fallback init path missing allow_reset=False
+    - 69   # observation.py — screenshot OCR'd before privacy check
+    - 71   # screen_observer.py — ScreenObserver re-instantiated every cycle
+    - 72   # screen_observer.py — double quotes not escaped in PS notification string
+    # P3 — test hygiene
+    - 99   # test_e2e_smoke.py — hits live Control API, no skip guard
+    - 102  # test_model_router.py — >= 12 lower-bound assertion; stale after v14 cleanup
+    - 106  # test_control_api.py — fixed 1.4s sleep for background task wait
+    - 108  # test_llama_backend.py — GPU/GGUF tests lack @pytest.mark.integration
+    - 109  # test_agent_loop.py — vision test patches the check it's testing
+    - 110  # test_tools.py / test_validators.py — no path traversal tests
+    - 111  # tests/ — fixed sleeps throughout; flaky under parallel runs
+
+  files_modified:
+    - agent/core/agent_loop.py
+    - launch.py
+    - agent/core/voice/tts.py
+    - agent/core/memory/memory_search.py
+    - agent/core/observation.py
+    - agent/core/screen_observer.py
+    - tests/test_e2e_smoke.py
+    - tests/test_model_router.py
+    - tests/test_control_api.py
+    - tests/test_validators.py
+
+  files_created:
+    - tests/test_agent_loop.py
+    - tests/test_llama_backend.py
+
+restart_required: true
+
+deferred:
+  - finding: 37
+    reason: >
+      RLock held for full model load is by design — single-model constraint requires
+      serializing all load/unload. A proper fix (lock only for state checks, spawn
+      load in background thread with condition variable) is a larger refactor.
+      Tracked for v16.
+  - finding: 18
+    reason: >
+      Cancel hotkey during direct dispatch requires refactoring the dispatch
+      pipeline to support interrupt signals. Larger scope — tracked for v16.
+
+test_command: >
+  pytest tests/test_agent_loop.py tests/test_control_api.py
+  tests/test_model_router.py tests/test_validators.py -v

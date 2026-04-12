@@ -1,0 +1,354 @@
+openapi: 3.0.0
+info:
+  title: Roamin Control API
+  description: Control plane API for Roamin ambient agent — status, models, plugins, tasks, and WebSocket events.
+  version: 0.1.0
+  contact:
+    name: Roamin Contributors
+servers:
+  - url: http://127.0.0.1:8765
+    description: Local development server (default port 8765; dynamic discovery via control_api_port.json)
+
+paths:
+  /status:
+    get:
+      summary: Get system status
+      description: Returns current agent status, uptime, version, and loaded models.
+      tags:
+        - System
+      responses:
+        '200':
+          description: Status retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, degraded, error]
+                  uptime:
+                    type: integer
+                    description: Seconds since startup
+                  version:
+                    type: string
+                    example: "0.1.0"
+                  models:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Model'
+
+  /models:
+    get:
+      summary: List available models
+      description: Returns list of LLM models with their status.
+      tags:
+        - Models
+      responses:
+        '200':
+          description: Models list retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Model'
+
+  /plugins:
+    get:
+      summary: List installed plugins
+      description: Returns list of discovered and installed plugins with manifest metadata.
+      tags:
+        - Plugins
+      responses:
+        '200':
+          description: Plugins list retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plugins:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Plugin'
+
+  /plugins/install:
+    post:
+      summary: Install a plugin
+      description: Schedule plugin installation from file or URL. Returns task_id for polling.
+      tags:
+        - Plugins
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source:
+                  type: string
+                  enum: [file, url]
+                  description: Source type
+                value:
+                  type: string
+                  description: File path or HTTPS URL to plugin package
+              required: [source, value]
+      responses:
+        '202':
+          description: Installation task scheduled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id:
+                    type: string
+                    example: "install-1612345678900"
+        '400':
+          description: Invalid request
+        '401':
+          description: Unauthorized (requires API key if enabled)
+
+  /plugins/{plugin_id}:
+    delete:
+      summary: Uninstall plugin
+      description: Remove an installed plugin.
+      tags:
+        - Plugins
+      parameters:
+        - name: plugin_id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "pkg.example"
+      responses:
+        '200':
+          description: Plugin uninstalled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                    example: "ok"
+        '404':
+          description: Plugin not found
+        '401':
+          description: Unauthorized
+
+  /plugins/{plugin_id}/action:
+    post:
+      summary: Perform plugin action
+      description: Enable, disable, or restart a plugin.
+      tags:
+        - Plugins
+      parameters:
+        - name: plugin_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action:
+                  type: string
+                  enum: [enable, disable, restart]
+              required: [action]
+      responses:
+        '200':
+          description: Action accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                    example: "accepted"
+                  action:
+                    type: string
+        '401':
+          description: Unauthorized
+
+  /task-history:
+    get:
+      summary: Get task history
+      description: Retrieve list of completed and running tasks.
+      tags:
+        - Tasks
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+          description: Max tasks to return
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, running, completed, failed]
+          description: Filter by status
+      responses:
+        '200':
+          description: Task history retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tasks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Task'
+
+  /actions/{action}:
+    post:
+      summary: System action
+      description: Trigger system actions (start, stop, restart).
+      tags:
+        - System
+      parameters:
+        - name: action
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [start, stop, restart]
+      responses:
+        '200':
+          description: Action accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                    example: "accepted"
+                  action:
+                    type: string
+        '401':
+          description: Unauthorized
+
+  /ws/events:
+    get:
+      summary: WebSocket event stream
+      description: |
+        Upgrade to WebSocket to receive real-time events.
+
+        Event types:
+        - `log_line`: {type: "log_line", data: {source: "agent", line: "...", level: "info"}}
+        - `status_update`: {type: "status_update", data: {uptime: 1234, state: "idle"}}
+        - `task_update`: {type: "task_update", data: {task_id: "t1", status: "running", progress: 0.5}}
+        - `plugin_event`: {type: "plugin_event", data: {plugin_id: "pkg.example", event: "started"}}
+      tags:
+        - Events
+      responses:
+        '101':
+          description: WebSocket upgrade successful
+
+components:
+  schemas:
+    Model:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "qwen3"
+        name:
+          type: string
+          example: "Qwen3"
+        status:
+          type: string
+          enum: [loaded, unloaded, loading, error]
+        vram_usage_mb:
+          type: number
+      required: [id, name, status]
+
+    Plugin:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "pkg.example"
+        name:
+          type: string
+          example: "Example Plugin"
+        version:
+          type: string
+          example: "0.1.0"
+        enabled:
+          type: boolean
+        status:
+          type: string
+          enum: [ready, running, error]
+        manifest:
+          $ref: '#/components/schemas/PluginManifest'
+      required: [id, name, version, enabled, manifest]
+
+    PluginManifest:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        entrypoint:
+          type: string
+          description: Relative path to plugin entry point
+        requestedCapabilities:
+          type: array
+          items:
+            type: string
+            enum: [filesystem, network, os_commands]
+          description: Capabilities the plugin requests
+        description:
+          type: string
+      required: [id, name, version, entrypoint]
+
+    Task:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "install-1612345678900"
+        type:
+          type: string
+          enum: [install, run, cleanup]
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        result:
+          type: object
+          description: Task-specific result object
+      required: [id, type, status, started_at]
+
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: x-roamin-api-key
+      description: API key (required if ROAMIN_CONTROL_API_KEY is set)
+
+security:
+  - ApiKey: []
