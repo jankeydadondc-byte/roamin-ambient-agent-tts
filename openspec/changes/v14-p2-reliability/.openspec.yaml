@@ -1,0 +1,72 @@
+schema: 1
+id: v14-p2-reliability
+title: "P2 Reliability Remediation — Data Integrity, Config, Infrastructure & Pipeline"
+created: "2026-04-12"
+status: active
+source_audit: v12-code-triage-audit
+
+priority: high
+
+scope:
+  findings_targeted:
+    # chat_engine pipeline gaps
+    - 22
+    - 23
+    - 25
+    # memory DB hardening
+    - 58
+    - 59
+    - 60
+    # ChromaDB stability
+    - 74
+    - 75
+    - 76
+    # audit log atomicity
+    - 91
+    # model config cleanup
+    - 14
+    - 15
+    - 16
+    - 17
+    # model sync safety
+    - 19
+    - 20
+    # infrastructure reliability
+    - 90
+    - 93
+    - 96
+    # API & UI wiring
+    - 84
+    - 85
+    - 88
+    # test reliability
+    - 103
+    - 104
+
+  files_modified:
+    - agent/core/chat_engine.py
+    - agent/core/memory/memory_store.py
+    - agent/core/memory/memory_search.py
+    - agent/core/audit_log.py
+    - agent/core/model_config.json
+    - agent/core/model_sync.py
+    - agent/core/roamin_logging.py
+    - agent/core/resource_monitor.py
+    - agent/control_api.py
+    - ui/control-panel/src/App.jsx
+    - ui/control-panel/src/apiClient.js
+    - requirements.txt
+    - tests/test_memory_module.py
+    - tests/test_model_router.py
+
+restart_required: true
+deferred:
+  - finding: 24
+    reason: >
+      AgentLoop on_progress callback for chat overlay requires WebSocket
+      broadcast integration — larger scope, tracked separately.
+
+test_command: >
+  pytest tests/test_chat_engine.py tests/test_memory_module.py
+  tests/test_approval_gates.py tests/test_control_api.py
+  tests/test_validators.py -v
