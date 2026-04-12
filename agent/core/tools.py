@@ -485,12 +485,25 @@ def _web_search(params: dict) -> dict:
         return _fail(str(e))
 
 
+# Block loopback and RFC-1918 private ranges — prevents SSRF against local services
+_SSRF_BLOCK = re.compile(
+    r"^https?://(localhost|127\.|0\.0\.0\.0|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)",
+    re.IGNORECASE,
+)
+
+
 def _fetch_url(params: dict) -> dict:
     url = params.get("url", "")
     if not url:
         return _fail("No URL provided", "validation")
     if not re.match(r"^https?://", url, re.IGNORECASE):
         return _fail(f"URL must start with http:// or https:// — got: {url[:80]}", "validation")
+    # Block SSRF: internal/loopback addresses must never be reachable via this tool
+    if _SSRF_BLOCK.match(url):
+        return _fail(
+            f"URL '{url[:80]}' targets an internal address. " "fetch_url is for external URLs only.",
+            "permission",
+        )
     try:
         import requests
 

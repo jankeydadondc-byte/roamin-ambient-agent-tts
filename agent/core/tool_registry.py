@@ -1,8 +1,9 @@
-﻿"""Tool registry â€” catalog of available tools with schemas and implementations."""
+"""Tool registry — catalog of available tools with schemas and implementations."""
 
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections.abc import Callable
 
@@ -10,6 +11,9 @@ from agent.core import audit_log
 from agent.core.tools import TOOL_IMPLEMENTATIONS
 
 logger = logging.getLogger(__name__)
+
+# Read skip flag once at import time — prevents runtime env-var injection attacks
+_SKIP_APPROVAL: bool = os.environ.get("ROAMIN_SKIP_APPROVAL", "").lower() == "1"
 
 # Fallback chains: if the primary tool fails, try each entry in order.
 # Each entry is (fallback_tool_name, param_adapter | None).
@@ -69,8 +73,13 @@ def approve_before_execution(
     # Get tool risk level from registration
     tool_info = registry.get(tool_name)
     if not tool_info:
-        # Unknown tool — assume safe (default LOW risk)
-        return True, None
+        # Unknown tool — deny; never assume safe
+        logger.warning("Approval gate: unknown tool '%s' — DENIED (not in registry)", tool_name)
+        return False, {
+            "success": False,
+            "error_type": "unknown_tool",
+            "message": f"Tool '{tool_name}' is not registered. Unknown tools are denied by default.",
+        }
 
     risk = tool_info.get("risk", "low")
 
@@ -78,10 +87,20 @@ def approve_before_execution(
     if risk.lower() != "high":
         return True, None  # LOW/MED risk tools skip approval gate
 
-    # No store available (e.g. test context without injection) — fail open with warning
+    # No store available — BLOCK execution; never silently approve HIGH-risk tools
     if store is None:
-        logger.warning("Approval store not injected; HIGH-risk tool '%s' running without approval gate", tool_name)
-        return True, None
+        logger.error(
+            "Approval store not injected; HIGH-risk tool '%s' BLOCKED (wiring missing on this call path)",
+            tool_name,
+        )
+        return False, {
+            "success": False,
+            "error_type": "approval_unavailable",
+            "message": (
+                f"Cannot execute '{tool_name}': approval store is not available. "
+                "HIGH-risk tools require an approval store to be injected before execution."
+            ),
+        }
 
     # Explicit opt-out
     if tool_info.get("approval_required", True) is False:
@@ -364,15 +383,13 @@ class ToolRegistry:
         """
 
         # Call pre-execution approval hook for HIGH-risk tools
-        import os
-
         success, result_or_error = approve_before_execution(
             registry=self,
             store=getattr(self, "store", None),  # injected at runtime from run_wake_listener.py
             tool_name=name,
             params=params,
             timeout=60,  # Can be configured via ROAMIN_APPROVAL_TIMEOUT env var
-            skip_approval=os.environ.get("ROAMIN_SKIP_APPROVAL", "").lower() == "1",
+            skip_approval=_SKIP_APPROVAL,  # read once at import time — not mutable at runtime
         )
 
         if not success:
@@ -394,7 +411,7 @@ class ToolRegistry:
             )
             return result
 
-        # Primary failed â€” try fallback chain
+        # Primary failed â€" try fallback chain
         for fallback_name, adapter in _TOOL_FALLBACKS.get(name, []):
             adapted_params = adapter(params) if adapter is not None else params  # type: ignore[operator]
             t1 = time.perf_counter()
@@ -414,7 +431,7 @@ class ToolRegistry:
                 return fb_result
             logger.debug("Fallback '%s' also failed: %s", fallback_name, fb_result.get("error"))
 
-        # All exhausted â€” log the failure
+        # All exhausted â€" log the failure
         total_elapsed = (time.perf_counter() - t0) * 1000
         audit_log.append(
             tool=name,
@@ -423,7 +440,7 @@ class ToolRegistry:
             result_summary=str(result.get("error", ""))[:200],
             duration_ms=total_elapsed,
         )
-        return result  # all fallbacks exhausted â€” return original failure
+        return result  # all fallbacks exhausted â€" return original failure
 
     def format_for_prompt(self) -> str:
         """Format tool list for inclusion in a model prompt."""

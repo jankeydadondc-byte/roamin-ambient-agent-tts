@@ -1,0 +1,24 @@
+schema: 1
+id: v13-security-remediation
+title: "Security Remediation — P1 & Critical P2 Findings"
+created: "2026-04-12"
+status: complete
+completed: "2026-04-12"
+source_audit: v12-code-triage-audit
+priority: critical
+
+scope:
+  findings_targeted: [1, 51, 52, 53, 54, 55, 77, 86, 87, 100, 101, 105, 107]
+  files_modified:
+    - launch.py
+    - agent/core/tool_registry.py
+    - agent/core/tools.py
+    - agent/core/validators.py
+    - agent/control_api.py
+    - agent/core/chat_engine.py
+    - tests/test_approval_gates.py
+    - tests/test_control_api.py
+    - tests/test_hitl_approval.py
+
+restart_required: true
+test_command: "pytest tests/test_approval_gates.py tests/test_control_api.py tests/test_hitl_approval.py -v"

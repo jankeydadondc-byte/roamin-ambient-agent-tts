@@ -62,6 +62,15 @@ def _get_chat_loop():
         except Exception as exc:
             logger.warning("[chat_engine] Plugin load failed (MemPalace may be unavailable): %s", exc)
 
+        # Inject approval store so HIGH-risk tools block for user approval on chat path
+        try:
+            from agent.core.memory.memory_store import MemoryStore
+
+            loop.registry.store = MemoryStore()
+            logger.info("[chat_engine] Approval store injected into chat registry")
+        except Exception as exc:
+            logger.warning("[chat_engine] Could not inject approval store — HIGH-risk tools will be BLOCKED: %s", exc)
+
         _chat_loop = loop
         return _chat_loop
 

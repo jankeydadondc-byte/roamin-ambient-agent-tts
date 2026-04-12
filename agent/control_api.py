@@ -39,10 +39,15 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Roamin Control API (dev)", lifespan=lifespan)
 
-# Allow local dev browser connections by default for the SPA prototype
+# Restrict CORS to known local origins — wildcard removed to reduce CSRF surface
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost", "http://127.0.0.1", "*"],
+    allow_origins=[
+        "http://localhost",
+        "http://localhost:5173",
+        "http://127.0.0.1",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -199,7 +204,12 @@ async def websocket_events(ws: WebSocket) -> None:
 
         if provided != key:
             if os.environ.get("ROAMIN_DEBUG"):
-                logger.warning(f"WebSocket auth failed: expected {key}, got {provided}")
+                # Redact key value — never log credential material
+                logger.warning(
+                    "WebSocket auth failed: expected key len=%d, got=%s",
+                    len(key),
+                    "***" if provided else "(none)",
+                )
             await ws.close(code=1008)
             return
 
@@ -457,7 +467,7 @@ async def list_pending_approvals() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@app.get("/approve/{approval_id}", response_class=HTMLResponse)
+@app.post("/approve/{approval_id}", response_class=HTMLResponse)
 async def approve_step(approval_id: int) -> HTMLResponse:
     """Execute an approved blocked step and mark it resolved."""
     try:
@@ -495,7 +505,7 @@ async def approve_step(approval_id: int) -> HTMLResponse:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@app.get("/deny/{approval_id}", response_class=HTMLResponse)
+@app.post("/deny/{approval_id}", response_class=HTMLResponse)
 async def deny_step(approval_id: int) -> HTMLResponse:
     """Mark a blocked step as denied without executing it."""
     try:
@@ -659,11 +669,9 @@ async def chat_reset() -> dict[str, Any]:
 async def chat_pending() -> dict[str, Any]:
     """Return pending proactive notifications (messages Roamin wanted to say)."""
     try:
-        from agent.core.proactive import ProactiveEngine
-
-        # The proactive engine is instantiated in run_wake_listener — we can't
-        # easily access that instance here. Return empty for now; the Tauri
-        # chat overlay will poll this endpoint.
+        # ProactiveEngine is instantiated in run_wake_listener — no shared
+        # instance is accessible here. Return empty; the Tauri chat overlay
+        # will poll this endpoint once wiring is added.
         return {"messages": [], "count": 0}
     except Exception:
         return {"messages": [], "count": 0}

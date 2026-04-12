@@ -1,6 +1,5 @@
 """Tests for approval gates — pre-execution hook wired into ToolRegistry.execute()."""
 
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -182,14 +181,18 @@ class TestToastNotifications:
 
 
 class TestSkipApprovalBypass:
-    """ROAMIN_SKIP_APPROVAL=1 must bypass the approval gate entirely."""
+    """_SKIP_APPROVAL=True must bypass the approval gate entirely.
+
+    Note: ROAMIN_SKIP_APPROVAL is now read once at module import time (finding #53 fix).
+    Tests patch the module-level constant directly instead of the environment variable.
+    """
 
     def test_skip_approval_bypasses_gate(self, registry, mock_toast):
-        """HIGH-risk tool runs immediately when skip flag is set."""
+        """HIGH-risk tool runs immediately when skip flag is True."""
         impl = MagicMock(return_value={"success": True, "result": "ran_without_approval"})
         registry.register("_test_high", "Test high", "high", {"code": "str"}, impl)
 
-        with patch.dict(os.environ, {"ROAMIN_SKIP_APPROVAL": "1"}):
+        with patch("agent.core.tool_registry._SKIP_APPROVAL", True):
             result = registry.execute("_test_high", {"code": "print('hi')"})
 
         assert result["success"] is True
@@ -203,20 +206,19 @@ class TestSkipApprovalBypass:
         registry.register("_test_high", "Test high", "high", {"code": "str"}, impl)
 
         with patch("agent.core.audit_log.append") as mock_append:
-            with patch.dict(os.environ, {"ROAMIN_SKIP_APPROVAL": "1"}):
+            with patch("agent.core.tool_registry._SKIP_APPROVAL", True):
                 registry.execute("_test_high", {"code": "..."})
 
         all_calls = mock_append.call_args_list
         skip_warning_calls = [c for c in all_calls if c.kwargs.get("tool") == "skip_approval"]
         assert len(skip_warning_calls) == 1
 
-    def test_env_var_case_insensitive(self, registry, mock_toast):
-        """ROAMIN_SKIP_APPROVAL is compared lowercase — '1' must match."""
+    def test_skip_false_does_not_bypass(self, registry, mock_toast):
+        """_SKIP_APPROVAL=False must NOT bypass — approval gate activates normally."""
         impl = MagicMock(return_value={"success": True, "result": "ok"})
         registry.register("_test_high", "Test high", "high", {"code": "str"}, impl)
 
-        # '0' must NOT bypass
-        with patch.dict(os.environ, {"ROAMIN_SKIP_APPROVAL": "0"}):
+        with patch("agent.core.tool_registry._SKIP_APPROVAL", False):
             _approved_store(registry)
             registry.execute("_test_high", {"code": "..."})
 
@@ -247,3 +249,76 @@ class TestBuiltinHighRiskTools:
             tool = reg.get(name)
             assert tool is not None, f"Tool not registered: {name}"
             assert tool.get("risk") == "low", f"{name} expected low, got {tool.get('risk')}"
+
+
+# ---------------------------------------------------------------------------
+# Finding #101 — Unknown tool must be denied, not silently approved
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownToolDenial:
+    """Unknown tool names must return a denial error — finding #52/#101 regression."""
+
+    def test_unknown_tool_denied(self, registry, mock_toast):
+        """Unregistered tool name returns unknown_tool error, never succeeds."""
+        result = registry.execute("definitely_not_a_real_tool_xyz", {})
+
+        assert result["success"] is False
+        assert result["error_type"] == "unknown_tool"
+        mock_toast.assert_not_called()
+
+    def test_unknown_tool_does_not_create_approval(self, registry, mock_toast):
+        """Unknown tool must be rejected before the approval gate, not after."""
+        result = registry.execute("nonexistent_tool", {"param": "value"})
+
+        assert result["success"] is False
+        registry.store.create_pending_approval.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Finding #100 — Chat path (store=None) must BLOCK HIGH-risk tools
+# ---------------------------------------------------------------------------
+
+
+class TestChatPathApprovalBypass:
+    """Verify chat path (no store injected) blocks HIGH-risk tools — finding #51 regression."""
+
+    def test_no_store_blocks_high_risk_tool(self, mock_toast):
+        """HIGH-risk tool on store-less registry returns approval_unavailable error."""
+        reg = ToolRegistry()
+        # Deliberately do NOT inject reg.store — mirrors pre-fix chat path
+        impl = MagicMock(return_value={"success": True, "result": "ran"})
+        reg.register("_test_high_chat", "Test", "high", {"code": "str"}, impl)
+
+        result = reg.execute("_test_high_chat", {"code": "print('hi')"})
+
+        assert result["success"] is False
+        assert result["error_type"] == "approval_unavailable"
+        impl.assert_not_called()
+
+    def test_no_store_allows_low_risk_tool(self, mock_toast):
+        """LOW-risk tools on store-less registry still execute immediately."""
+        reg = ToolRegistry()
+        impl = MagicMock(return_value={"success": True, "result": "read_ok"})
+        reg.register("_test_low_chat", "Test", "low", {"path": "str"}, impl)
+
+        result = reg.execute("_test_low_chat", {"path": "test.txt"})
+
+        assert result["success"] is True
+        impl.assert_called_once()
+
+    def test_store_injection_enables_approval_flow(self, mock_toast):
+        """After store injection (like chat_engine does), approval gate activates normally."""
+        reg = ToolRegistry()
+        reg.store = MagicMock()
+        reg.store.create_pending_approval.return_value = 99
+        reg.store.poll_approval_resolution.return_value = {"status": "approved", "reason": ""}
+
+        impl = MagicMock(return_value={"success": True, "result": "ran"})
+        reg.register("_test_high_injected", "Test", "high", {"code": "str"}, impl)
+
+        result = reg.execute("_test_high_injected", {"code": "1+1"})
+
+        assert result["success"] is True
+        reg.store.create_pending_approval.assert_called_once()
+        impl.assert_called_once()

@@ -101,7 +101,7 @@ class AgentLoop:
                 screen_obs = {"error": "screen observation failed"}
 
         # Build context — pass self._registry so plugin tools appear in the tool list
-        context = self._context_builder.build(
+        context = self._context_builder.build(  # type: ignore[call-arg]
             goal, screen_observation=screen_obs, registry=self._registry, session_context=session_context
         )
 

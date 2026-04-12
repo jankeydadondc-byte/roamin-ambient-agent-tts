@@ -100,19 +100,11 @@ class TestHandleBlockedSteps:
 
 
 class TestApprovalAPIEndpoints:
-    """Verify /approve, /deny, and /pending-approvals Control API endpoints."""
+    """Verify /approve, /deny, and /pending-approvals Control API endpoints.
 
-    def _client_with_store(self, store: MemoryStore):
-        from fastapi.testclient import TestClient
-
-        from agent.control_api import app
-
-        with TestClient(app) as client:
-            with (
-                patch("agent.control_api.MemoryStore", return_value=store),
-                patch("agent.core.memory.memory_store.MemoryStore", return_value=store),
-            ):
-                yield client
+    Note: approve/deny endpoints are POST-only after finding #86 fix.
+    All calls updated from GET to POST accordingly.
+    """
 
     def test_pending_approvals_empty(self):
         from fastapi.testclient import TestClient
@@ -141,7 +133,8 @@ class TestApprovalAPIEndpoints:
 
         with patch("agent.core.memory.memory_store.MemoryStore", return_value=store):
             with TestClient(app) as client:
-                resp = client.get(f"/deny/{aid}")
+                # POST — GET was CSRF-vulnerable (finding #86 fix)
+                resp = client.post(f"/deny/{aid}")
                 assert resp.status_code == 200
                 assert "denied" in resp.text.lower()
 
@@ -167,7 +160,8 @@ class TestApprovalAPIEndpoints:
             patch("agent.core.screen_observer._notify_windows"),
         ):
             with TestClient(app) as client:
-                resp = client.get(f"/approve/{aid}")
+                # POST — GET was CSRF-vulnerable (finding #86 fix)
+                resp = client.post(f"/approve/{aid}")
                 assert resp.status_code == 200
                 assert "approved" in resp.text.lower()
 
@@ -185,5 +179,5 @@ class TestApprovalAPIEndpoints:
 
         with patch("agent.core.memory.memory_store.MemoryStore", return_value=store):
             with TestClient(app) as client:
-                resp = client.get("/approve/9999")
+                resp = client.post("/approve/9999")
                 assert resp.status_code == 404

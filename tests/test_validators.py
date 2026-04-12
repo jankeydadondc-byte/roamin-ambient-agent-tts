@@ -92,3 +92,52 @@ class TestValidatePath:
     def test_mode_read_allows_more_roots(self):
         """Read mode should have more allowed roots than write mode."""
         assert len(SAFE_READ_ROOTS) >= len(SAFE_WRITE_ROOTS)
+
+    def test_ssh_dir_read_rejected(self):
+        """~/.ssh must be outside SAFE_READ_ROOTS — credential leak prevention."""
+        path = str(Path.home() / ".ssh" / "id_rsa")
+        result = validate_path(path, mode="read")
+        assert result is not None
+        assert result["success"] is False
+
+    def test_aws_credentials_read_rejected(self):
+        """~/.aws/credentials must be outside SAFE_READ_ROOTS."""
+        path = str(Path.home() / ".aws" / "credentials")
+        result = validate_path(path, mode="read")
+        assert result is not None
+        assert result["success"] is False
+
+    def test_documents_subdir_read_accepted(self):
+        """~/Documents subtree is explicitly in SAFE_READ_ROOTS and must be readable."""
+        path = str(Path.home() / "Documents" / "notes.txt")
+        assert validate_path(path, mode="read") is None
+
+    def test_downloads_subdir_read_accepted(self):
+        """~/Downloads subtree is explicitly in SAFE_READ_ROOTS and must be readable."""
+        path = str(Path.home() / "Downloads" / "file.pdf")
+        assert validate_path(path, mode="read") is None
+
+    def test_plugin_dir_write_rejected(self):
+        """Writes to agent/plugins/ must be blocked — code injection prevention."""
+        path = str(_PROJECT_ROOT / "agent" / "plugins" / "evil.py")
+        result = validate_path(path, mode="write")
+        assert result is not None
+        assert result["success"] is False
+        assert result["category"] == "permission"
+
+    def test_plugin_dir_read_accepted(self):
+        """Reads from agent/plugins/ are still allowed (plugins load themselves)."""
+        path = str(_PROJECT_ROOT / "agent" / "plugins" / "__init__.py")
+        assert validate_path(path, mode="read") is None
+
+    def test_core_dir_write_rejected(self):
+        """Writes to agent/core/ must be blocked — core module protection."""
+        path = str(_PROJECT_ROOT / "agent" / "core" / "tools.py")
+        result = validate_path(path, mode="write")
+        assert result is not None
+        assert result["success"] is False
+
+    def test_workspace_write_accepted(self):
+        """Writes to workspace/ are still allowed (normal agent output area)."""
+        path = str(_PROJECT_ROOT / "workspace" / "output.txt")
+        assert validate_path(path, mode="write") is None

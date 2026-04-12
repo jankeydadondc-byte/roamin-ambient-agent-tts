@@ -12,10 +12,22 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _USER_HOME = Path(os.path.expanduser("~"))
 _TEMP_DIR = Path(os.environ.get("TEMP", os.environ.get("TMP", "/tmp")))
 
-# Directories where read operations are allowed
+# Paths that must never be agent-writable — even though they sit inside SAFE_WRITE_ROOTS.
+# Checked before the allowlist to prevent persistent code injection via plugin directory.
+_BLOCKED_WRITE_PATHS: list[Path] = [
+    _PROJECT_ROOT / "agent" / "plugins",
+    _PROJECT_ROOT / "agent" / "core",
+    _PROJECT_ROOT / "run_wake_listener.py",
+    _PROJECT_ROOT / "launch.py",
+]
+
+# Explicit read-allowed subdirs — do NOT include all of _USER_HOME (exposes .ssh, .aws, etc.)
 SAFE_READ_ROOTS: list[Path] = [
     _PROJECT_ROOT,
-    _USER_HOME,
+    _USER_HOME / "Documents",
+    _USER_HOME / "Downloads",
+    _USER_HOME / "Desktop",
+    _USER_HOME / "AppData" / "Local" / "Roamin",
     _TEMP_DIR,
 ]
 
@@ -49,6 +61,22 @@ def validate_path(path: str, mode: str = "read") -> dict | None:
     path_str = str(resolved)
     if path_str.startswith("\\\\"):
         return {"success": False, "error": "UNC paths are not allowed", "category": "validation"}
+
+    # Denylist check for writes — blocked paths take priority over allowlist
+    if mode == "write":
+        for blocked in _BLOCKED_WRITE_PATHS:
+            try:
+                resolved.relative_to(blocked.resolve())
+                return {
+                    "success": False,
+                    "error": (
+                        f"Path '{resolved}' is a protected system directory. "
+                        "Agent writes to plugin and core directories are not allowed."
+                    ),
+                    "category": "permission",
+                }
+            except ValueError:
+                continue
 
     # Pick allowlist based on mode
     roots = SAFE_WRITE_ROOTS if mode == "write" else SAFE_READ_ROOTS

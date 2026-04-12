@@ -66,33 +66,48 @@ def _kill_pid(pid: int, label: str = "") -> bool:
 def _pids_by_cmdline(patterns: list[str]) -> dict[int, str]:
     """Return {pid: matched_pattern} for processes whose command line contains any pattern.
 
-    Uses ``wmic process`` which is available on all modern Windows.
+    Uses PowerShell Get-CimInstance — wmic was removed from Windows 11 build 22621+.
     """
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+
     found: dict[int, str] = {}
     try:
+        # Query via CIM — works on all supported Windows versions
         result = subprocess.run(
-            ["wmic", "process", "get", "ProcessId,CommandLine", "/FORMAT:CSV"],
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Get-CimInstance Win32_Process "
+                "| Select-Object ProcessId,CommandLine "
+                "| ConvertTo-Csv -NoTypeInformation",
+            ],
             capture_output=True,
             text=True,
+            timeout=10,
         )
         for line in result.stdout.splitlines():
-            line = line.strip()
-            if not line or line.startswith("Node"):
+            # Strip surrounding quotes from CSV values
+            line = line.strip().strip('"')
+            if not line or line.startswith("ProcessId"):
                 continue
             for pattern in patterns:
                 if pattern.lower() in line.lower():
-                    # CSV format: Node,CommandLine,ProcessId
-                    parts = line.rsplit(",", 1)
-                    if len(parts) == 2:
+                    # CSV format (after outer-quote strip): ProcessId","CommandLine
+                    parts = line.split('","', 1)
+                    if parts:
                         try:
-                            pid = int(parts[-1].strip())
+                            pid = int(parts[0].strip('"').strip())
                             if pid > 0:
                                 found[pid] = pattern
                         except ValueError:
                             pass
                     break
-    except Exception:
-        pass
+    except Exception as e:
+        _log.warning("[Launcher] Process cmdline scan failed (layer 4 disabled): %s", e)
     return found
 
 
