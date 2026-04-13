@@ -141,3 +141,23 @@ class TestValidatePath:
         """Writes to workspace/ are still allowed (normal agent output area)."""
         path = str(_PROJECT_ROOT / "workspace" / "output.txt")
         assert validate_path(path, mode="write") is None
+
+    def test_path_traversal_read_rejected(self):
+        """POSIX-style path traversal must be rejected on read (#110)."""
+        result = validate_path("../../etc/passwd", mode="read")
+        # validate_path returns None (allowed) or dict (blocked) — traversal must be blocked
+        assert result is not None
+        assert result["success"] is False
+
+    def test_path_traversal_write_rejected(self):
+        """Path traversal on write must be rejected (#110)."""
+        result = validate_path("../../etc/shadow", mode="write")
+        assert result is not None
+        assert result["success"] is False
+
+    def test_windows_traversal_write_rejected(self):
+        """Windows-style traversal into System32 must be rejected (#110)."""
+        path = str(_PROJECT_ROOT / ".." / ".." / "Windows" / "System32" / "drivers" / "etc" / "hosts")
+        result = validate_path(path, mode="write")
+        assert result is not None
+        assert result["success"] is False

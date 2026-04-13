@@ -172,10 +172,13 @@ def _notify_windows(message: str, title: str = "Roamin") -> None:
         pass
 
     # Fallback: legacy WScript.Shell popup (blocking, modal)
+    # Escape double quotes to prevent PowerShell string injection (#72)
+    safe_message = message.replace('"', '\\"').replace("\n", "`n")
+    safe_title = title.replace('"', '\\"')
     powershell_script = f"""
 Add-Type -AssemblyName System.Windows.Forms
 $shell = New-Object -ComObject WScript.Shell
-$shell.Popup("{message}", 0, "{title}", 0x40)
+$shell.Popup("{safe_message}", 0, "{safe_title}", 0x40)
 """
     try:
         subprocess.run(
@@ -214,10 +217,12 @@ def _notify_approval_toast(approval_id: int, action: str, tool: str | None, port
     try:
         approve_url = f"{base}/approve/{approval_id}"
         deny_url = f"{base}/deny/{approval_id}"
-        msg = f"Roamin needs approval to run: {label}\\n\\n" f"APPROVE: {approve_url}\\n" f"DENY:    {deny_url}"
+        msg = f"Roamin needs approval to run: {label}\\n\\nAPPROVE: {approve_url}\\nDENY:    {deny_url}"
+        # Sanitize for PowerShell double-quoted string — escape " and replace \n (#72)
+        safe_msg = msg.replace('"', '\\"').replace("\n", "`n")
         powershell_script = f"""
 $shell = New-Object -ComObject WScript.Shell
-$shell.Popup("{msg}", 60, "Roamin — Action Needs Approval", 0x40)
+$shell.Popup("{safe_msg}", 60, "Roamin — Action Needs Approval", 0x40)
 """
         subprocess.Popen(
             ["powershell", "-Command", powershell_script],
@@ -232,12 +237,13 @@ class ObservationScheduler:
         self._thread = None
         self._running = False
         self._interval = 300  # Default: 5 minutes
+        # Instantiate once — reuse across cycles to avoid repeated ModelRouter/MemoryManager I/O (#71)
+        self._observer = ScreenObserver()
 
     def _worker(self):
         """Background thread that periodically captures observations."""
         while self._running:
-            observer = ScreenObserver()
-            result = observer.observe()
+            result = self._observer.observe()
 
             if "description" in result:
                 message = f"Observed: {result['description'][:80]}..."

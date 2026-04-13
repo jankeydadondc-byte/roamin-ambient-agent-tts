@@ -555,6 +555,29 @@ class MemoryStore:
             columns = [col[0] for col in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
+    def cleanup_old_task_runs(self, older_than_hours: int = 24) -> int:
+        """Delete completed/failed task_runs older than given hours via MemoryStore (#8).
+
+        Returns number of rows deleted.
+        """
+        from datetime import datetime, timedelta
+
+        cutoff = (datetime.now() - timedelta(hours=older_than_hours)).isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            # Ensure table exists before attempting delete
+            cur_check = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='task_runs'")
+            if cur_check.fetchone() is None:
+                return 0
+            try:
+                cur = conn.execute(
+                    "DELETE FROM task_runs WHERE status IN ('completed', 'failed', 'partial')" " AND started_at < ?",
+                    (cutoff,),
+                )
+                return cur.rowcount
+            except sqlite3.OperationalError:
+                # Table may not exist on fresh install — not an error
+                return 0
+
     # --- HITL pending approval operations ---
 
     def create_pending_approval(

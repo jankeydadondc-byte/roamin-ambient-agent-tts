@@ -45,13 +45,19 @@ class TestExecuteSingle:
         assert "boom" in result["error"]
 
 
+def _reg_with_tools(*names: str) -> ToolRegistry:
+    """Build a ToolRegistry stub with the given tool names pre-registered (all low risk)."""
+    reg = ToolRegistry.__new__(ToolRegistry)
+    reg._tools = {n: {"name": n, "risk": "low", "params": {}} for n in names}
+    return reg
+
+
 class TestToolFallbackChains:
     """Unit tests for ToolRegistry.execute() fallback behaviour."""
 
     def test_primary_success_no_fallback(self):
         """If primary succeeds, fallbacks are never tried."""
-        reg = ToolRegistry.__new__(ToolRegistry)
-        reg._tools = {}
+        reg = _reg_with_tools("web_search")
 
         success_result = {"success": True, "result": "web result"}
         reg._execute_single = MagicMock(return_value=success_result)
@@ -63,8 +69,7 @@ class TestToolFallbackChains:
 
     def test_primary_fail_triggers_fallback(self):
         """If primary fails and fallback succeeds, fallback result is returned."""
-        reg = ToolRegistry.__new__(ToolRegistry)
-        reg._tools = {}
+        reg = _reg_with_tools("web_search", "fetch_url")
 
         fail_result = {"success": False, "error": "network error"}
         fb_result = {"success": True, "result": "<html>duckduckgo</html>"}
@@ -84,8 +89,7 @@ class TestToolFallbackChains:
 
     def test_fallback_param_adapter_applied(self):
         """Param adapter must transform query -> URL before calling fetch_url."""
-        reg = ToolRegistry.__new__(ToolRegistry)
-        reg._tools = {}
+        reg = _reg_with_tools("web_search", "fetch_url")
 
         calls = []
 
@@ -106,8 +110,7 @@ class TestToolFallbackChains:
 
     def test_all_fallbacks_fail_returns_original_error(self):
         """If every fallback also fails, the original primary failure is returned."""
-        reg = ToolRegistry.__new__(ToolRegistry)
-        reg._tools = {}
+        reg = _reg_with_tools("web_search", "fetch_url")
 
         fail_result = {"success": False, "error": "primary failed"}
 
@@ -120,8 +123,7 @@ class TestToolFallbackChains:
 
     def test_tool_with_no_fallback_returns_failure_directly(self):
         """Tool not in _TOOL_FALLBACKS should return failure immediately."""
-        reg = ToolRegistry.__new__(ToolRegistry)
-        reg._tools = {}
+        reg = _reg_with_tools("run_python")
 
         fail_result = {"success": False, "error": "syntax error"}
         reg._execute_single = MagicMock(return_value=fail_result)
@@ -135,8 +137,7 @@ class TestToolFallbackChains:
 
     def test_memory_recall_falls_back_to_memory_search(self):
         """memory_recall -> memory_search fallback with fact_name -> query adapter."""
-        reg = ToolRegistry.__new__(ToolRegistry)
-        reg._tools = {}
+        reg = _reg_with_tools("memory_recall", "memory_search")
 
         calls = []
 

@@ -21,6 +21,7 @@ class TestProgressCallbackSequence:
         loop._memory = MagicMock()
         loop._context_builder = MagicMock()
         loop._context_builder.build.return_value = "ctx"
+        loop._registry = MagicMock()
 
         mock_plan.return_value = [
             {"step": 1, "action": "Search", "tool": "web_search", "params": {}, "risk": "low"},
@@ -57,6 +58,7 @@ class TestProgressCallbackSequence:
         loop._memory = MagicMock()
         loop._context_builder = MagicMock()
         loop._context_builder.build.return_value = "ctx"
+        loop._registry = MagicMock()
 
         mock_plan.return_value = [
             {"step": 1, "action": "A", "tool": "web_search", "params": {}, "risk": "low"},
@@ -90,6 +92,7 @@ class TestProgressCallbackOptional:
         loop._memory = MagicMock()
         loop._context_builder = MagicMock()
         loop._context_builder.build.return_value = "ctx"
+        loop._registry = MagicMock()
 
         mock_plan.return_value = [
             {"step": 1, "action": "Do thing", "tool": "notify", "params": {}, "risk": "low"},
@@ -118,6 +121,7 @@ class TestProgressWithCancellation:
         loop._memory = MagicMock()
         loop._context_builder = MagicMock()
         loop._context_builder.build.return_value = "ctx"
+        loop._registry = MagicMock()
 
         mock_plan.return_value = [
             {"step": 1, "action": "A", "tool": "web_search", "params": {}, "risk": "low"},
@@ -151,6 +155,7 @@ class TestProgressDetailTruncation:
         loop._memory = MagicMock()
         loop._context_builder = MagicMock()
         loop._context_builder.build.return_value = "ctx"
+        loop._registry = MagicMock()
 
         long_action = "A" * 100
         mock_plan.return_value = [

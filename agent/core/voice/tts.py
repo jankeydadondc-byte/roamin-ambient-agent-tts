@@ -319,7 +319,8 @@ class TextToSpeech:
         """Speak via Windows SAPI using PowerShell — works from any thread, no COM affinity."""
         import subprocess
 
-        safe = text.replace("'", "''")  # escape single quotes for PowerShell
+        # Escape for PowerShell string literal: single-quotes, carriage returns, newlines (#30)
+        safe = text.replace("'", "''").replace("\r", "").replace("\n", " ")
         try:
             subprocess.run(
                 [

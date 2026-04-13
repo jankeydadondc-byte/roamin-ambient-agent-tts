@@ -2,9 +2,19 @@ import os
 import time
 from unittest.mock import patch
 
+from agent.control_api import app
 from fastapi.testclient import TestClient
 
-from agent.control_api import app
+
+def _wait_for_plugin(client, plugin_id: str, timeout: float = 5.0) -> bool:
+    """Poll /plugins until plugin_id appears or timeout expires — replaces fixed sleep (#106)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        resp = client.get("/plugins")
+        if any(p.get("id") == plugin_id for p in resp.json().get("plugins", [])):
+            return True
+        time.sleep(0.05)
+    return False
 
 
 def test_status_endpoint():
@@ -30,8 +40,8 @@ def test_plugin_install_and_list():
         task_id = inst.json().get("task_id")
         assert task_id
 
-        # allow background install simulation to complete
-        time.sleep(1.4)
+        # Poll until plugin appears — avoids fixed sleep (#106)
+        assert _wait_for_plugin(client, "pkg.test"), "Plugin did not appear after install"
 
         r2 = client.get("/plugins")
         assert r2.status_code == 200
@@ -48,7 +58,8 @@ def test_plugin_enable_disable():
                 "/plugins/install",
                 json={"id": "pkg.test", "name": "Test Plugin", "manifest": {"id": "pkg.test", "entrypoint": "run.py"}},
             )
-            time.sleep(1.4)
+            # Poll until plugin appears — avoids fixed sleep (#106)
+            _wait_for_plugin(client, "pkg.test")
 
         r2 = client.post("/plugins/pkg.test/action", json={"action": "disable"})
         assert r2.status_code == 200

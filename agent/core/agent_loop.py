@@ -5,6 +5,8 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import logging
+import os
+import sqlite3
 import threading
 import time
 from collections.abc import Callable
@@ -192,7 +194,15 @@ class AgentLoop:
         except Exception:
             pass
 
-        result["status"] = "completed" if result["steps"] else "blocked"
+        # Derive status from step outcomes — not just presence of steps (#7)
+        if not result["steps"]:
+            result["status"] = "blocked"
+        elif all(s.get("status") == "failed" for s in result["steps"]):
+            result["status"] = "failed"
+        elif any(s.get("status") == "failed" for s in result["steps"]):
+            result["status"] = "partial"
+        else:
+            result["status"] = "completed"
 
         # Finish task history record
         if task_run_id is not None:
@@ -270,35 +280,27 @@ class AgentLoop:
             return False  # Fail open — never block execution on monitoring failure
 
     def _cleanup_completed_tasks(self, older_than_hours: int = 24) -> dict:
-        """Delete completed task_runs older than *older_than_hours* from SQLite.
+        """Delete completed/failed/partial task_runs older than cutoff (#8).
 
-        Returns:
-            dict with keys ``deleted_count`` and ``oldest_retained_ts``.
+        Returns dict with ``deleted_count`` and ``oldest_retained_ts``.
         """
-        import sqlite3
         from datetime import datetime, timedelta
         from pathlib import Path
 
-        db_path = Path(__file__).parent / "memory" / "roamin_memory.db"
+        db_path = Path(str(self._memory.store.db_path))
         if not db_path.exists():
             return {"deleted_count": 0, "oldest_retained_ts": None}
 
         cutoff = (datetime.now() - timedelta(hours=older_than_hours)).isoformat()
         try:
-            conn = sqlite3.connect(str(db_path), timeout=5)
-            cur = conn.cursor()
-            cur.execute(
-                "DELETE FROM task_runs WHERE status = 'completed' AND started_at < ?",
-                (cutoff,),
-            )
-            deleted = cur.rowcount
-            cur.execute("SELECT MIN(started_at) FROM task_runs WHERE status IN ('completed', 'running')")
-            row = cur.fetchone()
-            oldest = row[0] if row and row[0] else None
-            conn.commit()
-            conn.close()
-            logger.info("Task cleanup: deleted %d rows, oldest retained: %s", deleted, oldest)
-            return {"deleted_count": deleted, "oldest_retained_ts": oldest}
+            with sqlite3.connect(str(db_path)) as conn:
+                cur = conn.execute(
+                    "DELETE FROM task_runs WHERE status IN ('completed', 'failed', 'partial')" " AND started_at < ?",
+                    (cutoff,),
+                )
+                deleted = cur.rowcount
+            logger.info("Task cleanup: deleted %d rows older than %dh", deleted, older_than_hours)
+            return {"deleted_count": deleted, "oldest_retained_ts": None}
         except Exception as exc:
             logger.warning("Task cleanup failed: %s", exc)
             return {"deleted_count": 0, "oldest_retained_ts": None}
@@ -358,8 +360,6 @@ class AgentLoop:
         }
 
         # Throttle check — skip when ROAMIN_USE_ASYNC is off (default)
-        import os
-
         if os.environ.get("ROAMIN_USE_ASYNC", "").lower() == "1" and self._should_throttle():
             step_result["status"] = "skipped"
             step_result["reason"] = "System resources exhausted — throttled"
@@ -385,20 +385,25 @@ class AgentLoop:
             step_result["reason"] = f"Tool '{tool_name}' not in registry"
             return step_result
 
-        # Execute low/medium risk tools with a timeout guard
+        # Execute low/medium risk tools with a non-blocking timeout guard (#6)
+        # Avoid context-manager so __exit__ doesn't block on a still-running timed-out thread.
         params = step.get("params") or step.get("parameters") or {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(self._registry.execute, str(tool_name), params)
-            try:
-                outcome = future.result(timeout=_TOOL_TIMEOUT_SECONDS)
-                step_result["status"] = "executed"
-                step_result["outcome"] = str(outcome.get("result") or outcome.get("error", ""))[:1500]
-            except concurrent.futures.TimeoutError:
-                step_result["status"] = "failed"
-                step_result["outcome"] = f"Tool '{tool_name}' timed out after {_TOOL_TIMEOUT_SECONDS}s"
-                logger.warning("Tool '%s' timed out after %ds", tool_name, _TOOL_TIMEOUT_SECONDS)
-            except Exception as e:
-                step_result["status"] = "failed"
-                step_result["outcome"] = str(e)[:500]
-                logger.warning("Tool '%s' raised exception: %s", tool_name, e)
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(self._registry.execute, str(tool_name), params)
+        try:
+            outcome = future.result(timeout=_TOOL_TIMEOUT_SECONDS)
+            step_result["status"] = "executed"
+            step_result["outcome"] = str(outcome.get("result") or outcome.get("error", ""))[:1500]
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            step_result["status"] = "failed"
+            step_result["outcome"] = f"Tool '{tool_name}' timed out after {_TOOL_TIMEOUT_SECONDS}s"
+            logger.warning("Tool '%s' timed out after %ds", tool_name, _TOOL_TIMEOUT_SECONDS)
+        except Exception as e:
+            step_result["status"] = "failed"
+            step_result["outcome"] = str(e)[:500]
+            logger.warning("Tool '%s' raised exception: %s", tool_name, e)
+        finally:
+            # cancel_futures=True abandons still-running thread; don't block caller (#6)
+            executor.shutdown(wait=False, cancel_futures=True)
         return step_result

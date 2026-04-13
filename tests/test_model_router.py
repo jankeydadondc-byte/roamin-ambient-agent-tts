@@ -59,8 +59,9 @@ class TestModelRouter:
         assert "model_id" in result
 
     def test_list_models_returns_all_models(self, router):
-        # model_sync auto-discovers additional models at runtime, so check >= base count
-        assert len(router.list_models()) >= 12
+        # v14 cleanup left 27 models in config; allow for dynamic discovery variance (#102)
+        models = router.list_models()
+        assert len(models) >= 20, f"Expected >= 20 models after v14 config cleanup, got {len(models)}"
 
     def test_all_models_have_required_fields(self, router):
         for m in router.list_models():

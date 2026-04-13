@@ -7,6 +7,7 @@ const navItems = [
     { id: "plugin-actions", label: "Install", icon: "+" },
     { id: "logs", label: "Logs", icon: "L" },
     { id: "task-history", label: "Tasks", icon: "T" },
+    { id: "help", label: "Help", icon: "?" },
 ];
 
 export default function Sidebar({ onNavigate, workspace = "local", onWorkspaceChange, selectedSection, setSelectedSection }) {

@@ -23,15 +23,26 @@ SPEC_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".github", "agents", "roamin.main.agent.yaml"
 )
 
+# System prompt lives in a plain text file at the project root for easy editing.
+# Restart Roamin after editing.
+SYSTEM_PROMPT_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "roamin ambient agent system prompt.txt",
+)
+
 _agent_spec_cache = None
+_system_prompt_cache = None
 
 
 def load_agent_spec(path: str = SPEC_PATH):
     global _agent_spec_cache
     if _agent_spec_cache is not None:
         return _agent_spec_cache
-    with open(path, encoding="utf-8") as f:
-        _agent_spec_cache = yaml.safe_load(f)
+    try:
+        with open(path, encoding="utf-8") as f:
+            _agent_spec_cache = yaml.safe_load(f)
+    except FileNotFoundError:
+        _agent_spec_cache = {}
     return _agent_spec_cache
 
 
@@ -50,9 +61,22 @@ def get_persona():
     return spec.get("persona", {})
 
 
-def get_system_prompt():
-    spec = load_agent_spec()
-    return spec.get("model_config", {}).get("system_prompt", {}).get("base", "You are Roamin.")
+def get_system_prompt() -> str:
+    """Read the system prompt from the plain-text file at the project root.
+
+    Falls back to a minimal default if the file is missing.
+    Cached after first read — restart to pick up edits.
+    """
+    global _system_prompt_cache
+    if _system_prompt_cache is not None:
+        return _system_prompt_cache
+    try:
+        with open(SYSTEM_PROMPT_PATH, encoding="utf-8") as f:
+            _system_prompt_cache = f.read().strip()
+    except FileNotFoundError:
+        logging.warning("System prompt file not found at %s — using default.", SYSTEM_PROMPT_PATH)
+        _system_prompt_cache = "You are Roamin. You address the user as bud."
+    return _system_prompt_cache
 
 
 def get_tools():

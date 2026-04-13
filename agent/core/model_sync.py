@@ -204,8 +204,14 @@ def _rglob_safe(base: Path) -> list[Path]:
     """
     results: list[Path] = []
     for p in base.rglob("*.gguf"):
-        # Skip if any component of the path (lowercased) is in the exclusion set
-        if any(part.lower() in _RGLOB_EXCLUSIONS for part in p.parts):
+        # Check only path components *relative to base* so that an excluded name
+        # appearing in the scan root's own ancestors (e.g. "roamin-ambient-agent-tts"
+        # in .pytest_tmp paths) doesn't incorrectly filter the file.
+        try:
+            rel_parts = p.relative_to(base).parts
+        except ValueError:
+            rel_parts = p.parts
+        if any(part.lower() in _RGLOB_EXCLUSIONS for part in rel_parts):
             continue
         results.append(p)
     return results

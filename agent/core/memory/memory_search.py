@@ -1,6 +1,9 @@
+import logging
 from pathlib import Path
 
 import chromadb
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_CHROMA = str(Path(__file__).parent / "chroma_db")
 
@@ -17,8 +20,18 @@ class ChromaMemorySearch:
                 settings=chromadb.Settings(allow_reset=False),
             )
         except Exception:
-            # Fallback: older chromadb versions may not accept settings kwarg
-            self.client = chromadb.PersistentClient(path=self.db_path)
+            # Fallback: older chromadb — try settings kwarg first, then bare (#68)
+            try:
+                self.client = chromadb.PersistentClient(
+                    path=self.db_path,
+                    settings=chromadb.Settings(allow_reset=False),
+                )
+            except TypeError:
+                # Very old chromadb: no settings kwarg — reset protection unavailable
+                logger.warning(
+                    "chromadb version does not support allow_reset=False — " "reset protection unavailable (#68)"
+                )
+                self.client = chromadb.PersistentClient(path=self.db_path)
         self.collection = self.client.get_or_create_collection(name="roamin_memory")
         # Seed counter from existing collection size so IDs never collide on
         # re-instantiation after the first session (#74)

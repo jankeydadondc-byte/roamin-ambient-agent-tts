@@ -19,6 +19,7 @@ class ContextBuilder:
         screen_observation: dict | None = None,
         max_memory_results: int = 5,
         registry: ToolRegistry | None = None,
+        session_context: str | None = None,
     ) -> str:
         """
         Build a context string for a model prompt.
@@ -27,6 +28,7 @@ class ContextBuilder:
             goal: The user's stated goal
             screen_observation: Optional result dict from ScreenObserver.observe()
             max_memory_results: Max recent memory entries to include
+            session_context: Optional formatted session transcript (from SessionTranscript)
 
         Returns:
             Formatted context string ready to inject into a system or user prompt
@@ -34,6 +36,10 @@ class ContextBuilder:
         parts: list[str] = []
 
         parts.append(f"## Goal\n{goal}")
+
+        # Session transcript — recent conversation for continuity
+        if session_context:
+            parts.append(session_context)
 
         # Memory context
         recent = self._memory.get_recent_conversations(limit=max_memory_results)

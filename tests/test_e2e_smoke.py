@@ -4,7 +4,12 @@ import time
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+import pytest
+
 from agent.core.ports import get_control_api_url
+
+# All tests in this file require a live Control API — skip in standard pytest runs (#99)
+pytestmark = pytest.mark.integration
 
 BASE = os.environ.get("CONTROL_API_URL") or get_control_api_url()
 

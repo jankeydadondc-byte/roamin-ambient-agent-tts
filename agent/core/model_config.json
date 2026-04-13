@@ -428,6 +428,67 @@
       "context_window": 32768,
       "always_available": false,
       "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\bartowski\\Qwen2.5-Coder-32B-Instruct-GGUF\\Qwen2.5-Coder-32B-Instruct-Q4_K_S.gguf"
+    },
+    {
+      "id": "devstral-small-2-24b-instruct-2512-q4-k-m",
+      "name": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M",
+      "provider": "llama_cpp",
+      "model_id": "Devstral-Small-2-24B-Instruct-2512-Q4_K_M",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Devstral-Small-2-24B-Instruct-2512-GGUF\\Devstral-Small-2-24B-Instruct-2512-Q4_K_M.gguf",
+      "mmproj_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Devstral-Small-2-24B-Instruct-2512-GGUF\\mmproj-Devstral-Small-2-24B-Instruct-2512-F16.gguf"
+    },
+    {
+      "id": "gpt-oss-120b-mxfp4-00001-of-00002",
+      "name": "gpt-oss-120b-MXFP4-00001-of-00002",
+      "provider": "llama_cpp",
+      "model_id": "gpt-oss-120b-MXFP4-00001-of-00002",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\gpt-oss-120b-GGUF\\gpt-oss-120b-MXFP4-00001-of-00002.gguf"
+    },
+    {
+      "id": "gpt-oss-120b-mxfp4-00002-of-00002",
+      "name": "gpt-oss-120b-MXFP4-00002-of-00002",
+      "provider": "llama_cpp",
+      "model_id": "gpt-oss-120b-MXFP4-00002-of-00002",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\gpt-oss-120b-GGUF\\gpt-oss-120b-MXFP4-00002-of-00002.gguf"
+    },
+    {
+      "id": "gpt-oss-20b-mxfp4",
+      "name": "gpt-oss-20b-MXFP4",
+      "provider": "llama_cpp",
+      "model_id": "gpt-oss-20b-MXFP4",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\gpt-oss-20b-GGUF\\gpt-oss-20b-MXFP4.gguf"
     }
   ],
   "routing_rules": {

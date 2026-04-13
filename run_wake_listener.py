@@ -1,5 +1,20 @@
 """Startup entry point for WakeListener — run this to start ctrl+space."""
 
+# =============================================================================
+# DEV NOTE — Shipping checklist (before any public/multi-user release):
+#
+# [ ] Playwright E2E tests — currently deferred (personal-tool scope).
+#     Add browser-level coverage for: install flow, plugin lifecycle
+#     (enable/disable/uninstall), and WS reconnect resilience.
+#     Scaffold at tests/e2e/playwright/install_flow.spec.ts and wire into
+#     .github/workflows/ with a headless browser job.
+#
+# [ ] Accessibility audit — run axe-core against built SPA before shipping:
+#       npx axe-cli http://localhost:5173
+#     Fix any high/critical violations (contrast, ARIA roles, focus order,
+#     labels). Add a CI axe gate once Playwright job exists.
+# =============================================================================
+
 # Must be set before ANY imports — Rust extensions (primp/ddgs) read RUST_LOG
 # at initialization time. Setting it inside main() is too late.
 import os
@@ -22,9 +37,13 @@ import keyboard  # noqa: E402,F401 - validates keyboard is available before bloc
 from agent.core import model_sync  # noqa: E402
 from agent.core.agent_loop import AgentLoop  # noqa: E402
 from agent.core.model_router import ModelRouter  # noqa: E402
+from agent.core.observation import ObservationLoop  # noqa: E402
+from agent.core.proactive import ProactiveEngine  # noqa: E402
+from agent.core.tray import RoaminTray  # noqa: E402
 from agent.core.voice.stt import SpeechToText  # noqa: E402
 from agent.core.voice.tts import TextToSpeech  # noqa: E402
 from agent.core.voice.wake_listener import WakeListener  # noqa: E402
+from agent.core.voice.wake_word import WakeWordListener  # noqa: E402
 
 # Constants
 LOCK_FILE = Path(__file__).parent / "logs" / "_wake_listener.lock"
@@ -282,6 +301,79 @@ def main() -> None:
     listener = WakeListener(hotkey="ctrl+space", stt=stt, tts=tts, agent_loop=agent_loop)
     listener.start()
     print("[Roamin] Ready. Press ctrl+space to activate.")
+
+    # Start wake word listener ("Hey Roamin") alongside keyboard hotkey
+    # Both triggers call the same _on_wake_thread function on the WakeListener
+    wake_word = WakeWordListener(
+        on_detect=listener._on_wake_thread,
+        on_stop_detect=None,  # Wired to TTS cancel in 11.2
+    )
+    if wake_word.start():
+        print('[Roamin] Wake word listener active — say "Hey Roamin" to activate.')
+    else:
+        print("[Roamin] Wake word listener unavailable — using ctrl+space only.")
+
+    # --- Chat overlay launcher (single-instance, detached process) ---
+    _chat_exe = Path(__file__).parent / "ui" / "roamin-chat" / "src-tauri" / "target" / "release" / "roamin-chat.exe"
+    _chat_proc: list[subprocess.Popen | None] = [None]
+
+    def _open_chat():
+        proc = _chat_proc[0]
+        if proc is not None and proc.poll() is None:
+            # Already running — nothing to do (window manages its own focus)
+            print("[Chat] Chat overlay is already running.", flush=True)
+            return
+        if not _chat_exe.exists():
+            print(
+                f"[Chat] roamin-chat.exe not found at:\n  {_chat_exe}\n"
+                "  Build it first:  cd ui/roamin-chat && npm run tauri build",
+                flush=True,
+            )
+            return
+        try:
+            _chat_proc[0] = subprocess.Popen(
+                [str(_chat_exe)],
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+            print(f"[Chat] Chat overlay launched (PID {_chat_proc[0].pid}).", flush=True)
+        except Exception as exc:
+            print(f"[Chat] Failed to launch chat overlay: {exc}", flush=True)
+
+    # Start system tray icon
+    tray = RoaminTray(
+        on_open_chat=_open_chat,
+        on_restart=lambda: print("[Tray] Restart requested"),
+        on_quit=lambda: os._exit(0),
+    )
+    if tray.start():
+        print("[Roamin] System tray icon active.")
+    else:
+        print("[Roamin] System tray unavailable (running without tray icon).")
+
+    # Start passive observation loop (screenshots + OCR)
+    def _on_observation(event):
+        if event.get("type") == "privacy_pause":
+            tray.set_state("privacy_pause")
+        elif event.get("type") == "observation_logged":
+            pass  # Normal observation — no state change needed
+
+    obs_loop = ObservationLoop(
+        on_observation=_on_observation,
+    )
+    obs_loop.start()
+    print("[Roamin] Observation loop active (screenshots every 30s).")
+
+    # Wire tray screenshot toggle to observation loop
+    tray._on_toggle_screenshots = lambda enabled: obs_loop.set_manual_override(True if enabled else False)
+
+    # Start proactive notification engine
+    proactive = ProactiveEngine(tray=tray, tts=tts)
+    proactive.start()
+    print("[Roamin] Proactive notification engine active.")
+
+    # Wire tray proactive toggle
+    tray._on_toggle_proactive = lambda enabled: setattr(proactive, "enabled", enabled)
+
     print(f"\n[Roamin] Log file: {log_path}")
     print("[Roamin] Terminal will remain open for monitoring. Close to stop Roamin.\n")
 

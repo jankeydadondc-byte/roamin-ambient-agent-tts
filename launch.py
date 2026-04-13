@@ -221,9 +221,37 @@ def stop_stale_instances() -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _check_required_scripts() -> None:
+    """Verify required launch targets exist before spawning processes (#3)."""
+    _REQUIRED_SCRIPTS = [
+        PROJECT_ROOT / "run_wake_listener.py",
+        PROJECT_ROOT / "run_control_api.py",
+    ]
+    for script in _REQUIRED_SCRIPTS:
+        if not script.exists():
+            sys.exit(f"[Launcher] ERROR: required script not found: {script}")
+
+
+def _wait_for_control_api(port: int = 8765, timeout: int = 15) -> bool:
+    """Poll /status until the Control API responds or timeout expires (#2)."""
+    import urllib.request
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/status", timeout=2)
+            return True
+        except Exception:
+            time.sleep(0.5)
+    return False
+
+
 def launch_all() -> None:
     """Spawn all Roamin components in their own console windows."""
     flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)  # Windows only; no-op on other platforms
+
+    # Verify scripts exist before attempting to spawn (#3)
+    _check_required_scripts()
 
     # --- Roamin wake listener (spawns Control API as sidecar automatically) ---
     print(f"[Launcher] Starting Roamin (using {Path(PYTHON).name})...")
@@ -242,8 +270,14 @@ def launch_all() -> None:
         creationflags=flags,
     )
 
-    print()
-    print("[Launcher] All systems go!")
+    # Confirm Control API is actually responsive before declaring success (#2)
+    print("[Launcher] Waiting for Control API...")
+    if _wait_for_control_api():
+        print()
+        print("[Launcher] All systems go — Control API confirmed responsive.")
+    else:
+        print()
+        print("[Launcher] WARNING: Control API did not respond within 15s. Check the console window.")
     print(f"  Control Panel UI => http://127.0.0.1:{VITE_PORT}")
     print("  Control API      => http://127.0.0.1:8765")
     print()

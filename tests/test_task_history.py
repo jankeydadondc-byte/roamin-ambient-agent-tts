@@ -143,6 +143,7 @@ class TestAgentLoopTaskHistoryIntegration:
         loop._cancel_event.clear = MagicMock()
         loop._context_builder = MagicMock()
         loop._context_builder.build.return_value = "ctx"
+        loop._registry = MagicMock()
 
         # Use a real MemoryManager with temp db
         tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
@@ -190,6 +191,7 @@ class TestTaskHistoryNonFatal:
         loop._cancel_event.clear = MagicMock()
         loop._context_builder = MagicMock()
         loop._context_builder.build.return_value = "ctx"
+        loop._registry = MagicMock()
 
         # Memory that raises on everything
         mock_memory = MagicMock()
@@ -212,9 +214,8 @@ class TestTaskHistoryAPI:
 
     def test_task_history_endpoint_returns_tasks(self):
         """GET /task-history returns task data."""
-        from fastapi.testclient import TestClient
-
         from agent.control_api import app
+        from fastapi.testclient import TestClient
 
         with TestClient(app) as client:
             resp = client.get("/task-history")
