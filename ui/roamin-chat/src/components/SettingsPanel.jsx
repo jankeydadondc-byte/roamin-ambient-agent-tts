@@ -7,6 +7,7 @@ import {
   selectModel,
   setVolume,
   setScreenshots as apiSetScreenshots,
+  refreshModels,
 } from "../apiClient";
 
 /**
@@ -17,18 +18,27 @@ import {
  * @param {string}   selectedModel   - lifted state from App
  * @param {Function} onModelChange   - lifted setter
  * @param {Array}    models          - lifted models array from App
+ * @param {Function} onModelsRefresh - called with fresh models array after refresh
  */
-export default function SettingsPanel({ onClose, selectedModel, onModelChange, models }) {
+export default function SettingsPanel({ onClose, selectedModel, onModelChange, models, onModelsRefresh }) {
   const [volume, setVolumeState] = useState(100);
   const [screenshots, setScreenshotsState] = useState(true);
-  const [alwaysOnTop, setAlwaysOnTop] = useState(false);
+  const [alwaysOnTop, setAlwaysOnTop] = useState(
+    () => localStorage.getItem("alwaysOnTop") === "true"
+  );
   const [modelSearch, setModelSearch] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectingModel, setSelectingModel] = useState(null); // model id being loaded
 
   // Load current settings on open
   useEffect(() => {
     getSettings().then((s) => {
       if (s.volume !== undefined) setVolumeState(Math.round(s.volume * 100));
       if (s.screenshots_enabled !== undefined) setScreenshotsState(s.screenshots_enabled);
+      if (s.always_on_top !== undefined) {
+        setAlwaysOnTop(s.always_on_top);
+        localStorage.setItem("alwaysOnTop", String(s.always_on_top));
+      }
     }).catch(() => {});
   }, []);
 
@@ -44,8 +54,33 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
 
   const handleAlwaysOnTop = (checked) => {
     setAlwaysOnTop(checked);
+    localStorage.setItem("alwaysOnTop", String(checked));
     if (_tauriInvoke) {
       _tauriInvoke("set_always_on_top", { onTop: checked }).catch(() => {});
+    }
+  };
+
+  const handleModelSelect = async (id) => {
+    setSelectingModel(id);
+    try {
+      onModelChange(id);
+      await selectModel(id);
+    } catch (_) {}
+    finally {
+      setSelectingModel(null);
+    }
+  };
+
+  const handleRefreshModels = async () => {
+    setRefreshing(true);
+    try {
+      const result = await refreshModels();
+      if (result.models && onModelsRefresh) {
+        onModelsRefresh(result.models);
+      }
+    } catch (_) {}
+    finally {
+      setRefreshing(false);
     }
   };
 
@@ -65,7 +100,18 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
 
         <div className="sidebar-body">
           {/* ── Model ── */}
-          <div className="settings-section-title">Model</div>
+          <div className="settings-section-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>Model</span>
+            <button
+              className="toolbar-btn"
+              title={refreshing ? "Refreshing…" : "Refresh model list from LM Studio"}
+              onClick={handleRefreshModels}
+              disabled={refreshing}
+              style={{ fontSize: 13, padding: "2px 6px" }}
+            >
+              {refreshing ? "…" : "↺"}
+            </button>
+          </div>
           {models.length > 8 && (
             <input
               className="model-search"
@@ -77,7 +123,7 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
           )}
           <div
             className={`model-option ${!selectedModel ? "selected" : ""}`}
-            onClick={() => onModelChange("")}
+            onClick={() => handleModelSelect("")}
           >
             <span className="model-checkmark">{!selectedModel ? "✓" : ""}</span>
             Auto
@@ -85,16 +131,24 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
           {filteredModels.map((m) => {
             const id = m.id || m;
             const name = m.name || m.id || m;
+            const isLoading = selectingModel === id;
+            const isUnavailable = m.status === "unavailable";
             return (
               <div
                 key={id}
-                className={`model-option ${selectedModel === id ? "selected" : ""}`}
-                onClick={() => { onModelChange(id); selectModel(id).catch(() => {}); }}
+                className={`model-option ${selectedModel === id ? "selected" : ""} ${isUnavailable ? "model-unavailable" : ""}`}
+                onClick={() => !isUnavailable && handleModelSelect(id)}
+                title={isUnavailable ? "Not available in LM Studio" : name}
               >
-                <span className="model-checkmark">{selectedModel === id ? "✓" : ""}</span>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span className="model-checkmark">
+                  {isLoading ? "⟳" : selectedModel === id ? "✓" : ""}
+                </span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: isUnavailable ? 0.45 : 1 }}>
                   {name}
                 </span>
+                {isUnavailable && (
+                  <span style={{ fontSize: 9, color: "var(--text-secondary)", marginLeft: "auto", flexShrink: 0 }}>offline</span>
+                )}
               </div>
             );
           })}

@@ -1,0 +1,19 @@
+name: Code
+description: Code-focused mode — routes to code model with file tools
+system_prompt: |
+  You are Roamin in code mode. You are an expert software engineer.
+  Read files, analyze code, write clean solutions, and explain your reasoning.
+  Prefer code over prose. Always show file paths and line references.
+model: ""
+tools:
+  - read_file
+  - write_file
+  - list_directory
+  - glob
+  - grep
+  - git_status
+  - git_diff
+  - git_log
+  - run_python
+  - py_compile_check
+risk_level: medium

@@ -21,7 +21,10 @@ const CONN_STYLES = {
 export default function App() {
   const [models, setModels]               = useState([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("");
+  // Restore last-selected model from localStorage so it survives page refresh
+  const [selectedModel, setSelectedModel] = useState(
+    () => localStorage.getItem("roamin_selected_model") || ""
+  );
   const [connState, setConnState]         = useState("connecting");
 
   // Panel visibility
@@ -82,9 +85,14 @@ export default function App() {
 
   const handleModelChange = (modelId) => {
     setSelectedModel(modelId);
+    localStorage.setItem("roamin_selected_model", modelId || "");
     selectModel(modelId).catch((err) =>
       console.error("[App] Model switch failed:", err)
     );
+  };
+
+  const handleModelsRefresh = (freshModels) => {
+    setModels(freshModels);
   };
 
   const handleNewChat = async () => {
@@ -186,6 +194,7 @@ export default function App() {
         models={models}
         selectedModel={selectedModel}
         onModelChange={handleModelChange}
+        onModelsRefresh={handleModelsRefresh}
         searchQuery={searchQuery}
         onSearchMatchCount={setSearchMatchCount}
         searchMatchIndex={searchMatchIndex}
@@ -202,6 +211,7 @@ export default function App() {
           selectedModel={selectedModel}
           onModelChange={handleModelChange}
           models={models}
+          onModelsRefresh={handleModelsRefresh}
         />
       )}
 

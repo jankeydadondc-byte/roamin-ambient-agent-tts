@@ -297,6 +297,46 @@ export async function getPendingNotifications() {
   }
 }
 
+/** Refresh the model list from LM Studio and reconcile with config. */
+export async function refreshModels() {
+  try {
+    const res = await _fetch("/models/refresh", { method: "POST" });
+    return res.json();
+  } catch (_) {
+    return { refreshed: false, models: [] };
+  }
+}
+
+/** List all agent definition files from the agents/ folder. */
+export async function getAgents() {
+  try {
+    const res = await _fetch("/agents");
+    return res.json();
+  } catch (_) {
+    return { agents: [] };
+  }
+}
+
+/** Create a new agent definition file. */
+export async function createAgent(agentData) {
+  const res = await _fetch("/agents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(agentData),
+  });
+  return res.json();
+}
+
+/** Enable or disable a tool by name. */
+export async function toggleTool(toolName, enabled) {
+  const res = await _fetch(`/tools/${encodeURIComponent(toolName)}/toggle`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+  return res.json();
+}
+
 // --- WebSocket events ---
 
 export function connectEvents(onEvent) {

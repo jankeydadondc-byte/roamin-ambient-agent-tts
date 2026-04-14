@@ -294,12 +294,93 @@ async def select_model(request: Request) -> dict[str, Any]:
 
     set_task_model(task, model_id)
     model_cfg = router.select(task)
+
+    # Persist: update model_overrides + default_model in settings.local.json
+    from agent.core import settings_store
+
+    settings = settings_store.load()
+    overrides: dict[str, str] = settings.get("model_overrides", {})
+    overrides[task] = model_id
+    settings["model_overrides"] = overrides
+    if task == "default":
+        settings["default_model"] = model_id
+    settings_store.save(settings)
+
+    # Best-effort: tell LM Studio to load the model
+    lm_id = model_cfg.get("model_id", model_id)
+    lm_loaded = False
+    try:
+        import requests as _requests  # noqa: PLC0415
+
+        resp = _requests.post(
+            "http://127.0.0.1:1234/api/v0/models/load",
+            json={"identifier": lm_id},
+            timeout=5,
+        )
+        lm_loaded = resp.ok
+        if not resp.ok:
+            logger.warning("LM Studio load returned %s for model '%s'", resp.status_code, lm_id)
+    except Exception as lm_err:
+        logger.debug("LM Studio load skipped (not reachable?): %s", lm_err)
+
     return {
         "status": "ok",
         "task": task,
         "model_id": model_id,
         "model_name": model_cfg.get("name", model_id),
+        "lm_loaded": lm_loaded,
     }
+
+
+@app.post("/models/refresh")
+async def refresh_models() -> dict[str, Any]:
+    """Query LM Studio for available models and reconcile with config.
+
+    - Marks models not present in LM Studio as status='unavailable'
+    - Adds any net-new LM Studio models to the in-memory list
+    - Updates app.state.models so GET /models reflects fresh state
+    """
+    import requests as _requests  # noqa: PLC0415
+
+    try:
+        resp = _requests.get("http://127.0.0.1:1234/api/v0/models", timeout=5)
+        if not resp.ok:
+            return {"refreshed": False, "error": f"LM Studio returned {resp.status_code}", "models": app.state.models}
+
+        lm_models: list[dict[str, Any]] = resp.json().get("data", [])
+        lm_ids: set[str] = {m.get("id", "") for m in lm_models}
+
+        # Mark existing models available/unavailable based on LM Studio response
+        updated: list[dict[str, Any]] = []
+        for m in app.state.models:
+            mid = m.get("id", "")
+            lm_model_id = m.get("model_id", mid)
+            in_lm = any(lm_id in (mid, lm_model_id) for lm_id in lm_ids)
+            updated.append({**m, "status": "loaded" if in_lm else "unavailable"})
+
+        # Add net-new models from LM Studio not already in the list
+        existing_model_ids = {m.get("model_id", m.get("id", "")) for m in app.state.models}
+        for lm in lm_models:
+            lm_model_id = lm.get("id", "")
+            if lm_model_id not in existing_model_ids:
+                updated.append(
+                    {
+                        "id": lm_model_id,
+                        "name": lm.get("id", lm_model_id),
+                        "model_id": lm_model_id,
+                        "provider": "lmstudio",
+                        "status": "loaded",
+                        "always_available": False,
+                    }
+                )
+
+        app.state.models = updated
+        logger.info("Model list refreshed: %d models (%d from LM Studio)", len(updated), len(lm_models))
+        return {"refreshed": True, "models": updated}
+
+    except Exception as e:
+        logger.warning("POST /models/refresh failed: %s", e)
+        return {"refreshed": False, "error": str(e), "models": app.state.models}
 
 
 @app.get("/models/current")
@@ -763,17 +844,19 @@ async def list_sessions() -> dict[str, Any]:
 
 @app.get("/tools")
 async def get_tools() -> dict[str, Any]:
-    """List all registered agent tools with name, description, and risk level."""
+    """List all registered agent tools with name, description, risk, and enabled state."""
     try:
+        from agent.core import settings_store
         from agent.core.tool_registry import ToolRegistry
 
         registry = ToolRegistry()
+        tool_states: dict[str, bool] = settings_store.get("tool_states", {})
         tools = [
             {
                 "name": name,
                 "description": meta.get("description", ""),
                 "risk": meta.get("risk", "low"),
-                "enabled": True,  # Toggle UI is v2 — all registered tools are active
+                "enabled": tool_states.get(name, True),  # default enabled
             }
             for name, meta in registry._tools.items()
         ]
@@ -783,6 +866,35 @@ async def get_tools() -> dict[str, Any]:
         return {"tools": []}
 
 
+@app.post("/tools/{tool_name}/toggle")
+async def toggle_tool(tool_name: str, request: Request) -> dict[str, Any]:
+    """Enable or disable a tool by name. Persisted to settings.local.json."""
+    try:
+        from agent.core import settings_store
+        from agent.core.tool_registry import ToolRegistry
+
+        body = await request.json()
+        enabled: bool = bool(body.get("enabled", True))
+
+        registry = ToolRegistry()
+        if tool_name not in registry._tools:
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+
+        settings = settings_store.load()
+        tool_states: dict[str, bool] = settings.get("tool_states", {})
+        tool_states[tool_name] = enabled
+        settings["tool_states"] = tool_states
+        settings_store.save(settings)
+
+        logger.info("Tool '%s' %s", tool_name, "enabled" if enabled else "disabled")
+        return {"tool": tool_name, "enabled": enabled, "status": "ok"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("POST /tools/%s/toggle failed: %s", tool_name, e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 # ---------------------------------------------------------------------------
 # Settings (Priority 11.3b)
 # ---------------------------------------------------------------------------
@@ -790,10 +902,15 @@ async def get_tools() -> dict[str, Any]:
 
 @app.get("/settings")
 async def get_settings() -> dict[str, Any]:
-    """Return current Roamin settings."""
+    """Return current Roamin settings — merged from settings.local.json + env-var defaults."""
+    from agent.core import settings_store
+
+    persisted = settings_store.load()
     return {
-        "volume": 1.0,
-        "screenshots_enabled": True,
+        "volume": persisted.get("volume", 1.0),
+        "screenshots_enabled": persisted.get("screenshots_enabled", True),
+        "always_on_top": persisted.get("always_on_top", False),
+        "default_model": persisted.get("default_model", ""),
         "proactive_enabled": True,
         "observation_interval": int(os.environ.get("ROAMIN_OBS_INTERVAL", "30")),
         "session_timeout_min": int(os.environ.get("ROAMIN_SESSION_TIMEOUT_MIN", "30")),
@@ -803,19 +920,121 @@ async def get_settings() -> dict[str, Any]:
 
 @app.post("/settings/volume")
 async def set_volume(request: Request) -> dict[str, Any]:
-    """Set TTS volume (0.0 to 1.0)."""
+    """Set TTS volume (0.0 to 1.0). Persisted to settings.local.json."""
+    from agent.core import settings_store
+
     body = await request.json()
-    volume = body.get("volume", 1.0)
+    volume = float(body.get("volume", 1.0))
     if not (0.0 <= volume <= 1.0):
         raise HTTPException(status_code=400, detail="volume must be 0.0-1.0")
-    # Volume control will be wired to TTS engine when the proactive engine
-    # and TTS are accessible from here. For now, acknowledge the setting.
-    return {"volume": volume, "status": "accepted"}
+    settings_store.set_value("volume", volume)
+    return {"volume": volume, "status": "ok"}
 
 
 @app.post("/settings/screenshots")
 async def set_screenshots(request: Request) -> dict[str, Any]:
-    """Enable or disable screenshot observation."""
+    """Enable or disable screenshot observation. Persisted to settings.local.json."""
+    from agent.core import settings_store
+
     body = await request.json()
-    enabled = body.get("enabled", True)
-    return {"screenshots_enabled": enabled, "status": "accepted"}
+    enabled = bool(body.get("enabled", True))
+    settings_store.set_value("screenshots_enabled", enabled)
+    return {"screenshots_enabled": enabled, "status": "ok"}
+
+
+@app.post("/settings/update")
+async def update_settings(request: Request) -> dict[str, Any]:
+    """Bulk-update any settings keys. Persisted to settings.local.json."""
+    from agent.core import settings_store
+
+    body = await request.json()
+    # Whitelist of allowed keys to avoid arbitrary data injection
+    allowed = {"volume", "screenshots_enabled", "always_on_top", "default_model"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid settings keys provided")
+    settings_store.update(updates)
+    return {"updated": list(updates.keys()), "status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Agent Definitions (§2.5)
+# ---------------------------------------------------------------------------
+
+
+def _agents_dir() -> Path:
+    return paths.get_project_root() / "agents"
+
+
+@app.get("/agents")
+async def list_agents() -> dict[str, Any]:
+    """List all agent definition YAML files from the agents/ folder."""
+    try:
+        import yaml as _yaml  # pyyaml — available in venv
+
+        d = _agents_dir()
+        if not d.exists():
+            return {"agents": []}
+        agents: list[dict[str, Any]] = []
+        for f in sorted(d.glob("*.yaml")):
+            try:
+                data = _yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+                agents.append(
+                    {
+                        "id": f.stem,
+                        "name": data.get("name", f.stem),
+                        "description": data.get("description", ""),
+                        "model": data.get("model", ""),
+                        "tools": data.get("tools", []),
+                        "risk_level": data.get("risk_level", "low"),
+                        "system_prompt": data.get("system_prompt", ""),
+                    }
+                )
+            except Exception as yaml_err:
+                logger.warning("Failed to parse agent file %s: %s", f, yaml_err)
+        return {"agents": agents}
+    except Exception as e:
+        logger.warning("GET /agents failed: %s", e)
+        return {"agents": []}
+
+
+@app.post("/agents")
+async def create_agent(request: Request) -> dict[str, Any]:
+    """Create a new agent definition YAML file in the agents/ folder."""
+    try:
+        import re as _re
+
+        import yaml as _yaml
+
+        body = await request.json()
+        name = (body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+
+        # Sanitize filename: lowercase, spaces → hyphens, strip non-alphanumeric
+        slug = _re.sub(r"[^a-z0-9-]", "", name.lower().replace(" ", "-"))
+        if not slug:
+            raise HTTPException(status_code=400, detail="name produces an empty filename")
+
+        d = _agents_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        target = d / f"{slug}.yaml"
+        if target.exists():
+            raise HTTPException(status_code=409, detail=f"Agent '{slug}' already exists")
+
+        agent_data: dict[str, Any] = {
+            "name": name,
+            "description": body.get("description", ""),
+            "system_prompt": body.get("system_prompt", ""),
+            "model": body.get("model", ""),
+            "tools": body.get("tools", []),
+            "risk_level": body.get("risk_level", "low"),
+        }
+        target.write_text(_yaml.dump(agent_data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        logger.info("Created agent definition: %s", target)
+        return {"id": slug, "status": "created", **agent_data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("POST /agents failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)) from e

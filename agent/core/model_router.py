@@ -21,6 +21,23 @@ logger = logging.getLogger(__name__)
 _TASK_OVERRIDES: dict[str, str] = {}
 
 
+def _load_persisted_overrides() -> None:
+    """Pre-populate _TASK_OVERRIDES from settings.local.json at startup."""
+    try:
+        from agent.core.settings_store import get as _settings_get
+
+        overrides: dict[str, str] = _settings_get("model_overrides", {})
+        for task, model_id in overrides.items():
+            if model_id:
+                _TASK_OVERRIDES[task] = model_id
+                logger.info("Restored model override from settings: task '%s' -> '%s'", task, model_id)
+    except Exception as _e:
+        logger.debug("Could not load persisted model overrides: %s", _e)
+
+
+_load_persisted_overrides()
+
+
 def set_task_model(task: str, model_id: str) -> None:
     """Override the model used for *task* until cleared or process restart."""
     _TASK_OVERRIDES[task] = model_id

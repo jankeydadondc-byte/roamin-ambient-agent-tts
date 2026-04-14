@@ -382,6 +382,21 @@ class ToolRegistry:
         On failure, tries configured fallback chain. Every execution is recorded in the audit log.
         """
 
+        # Check if the tool has been disabled via the settings toggle
+        try:
+            from agent.core.settings_store import get as _settings_get
+
+            tool_states: dict[str, bool] = _settings_get("tool_states", {})
+            if not tool_states.get(name, True):
+                logger.info("Tool '%s' is disabled — blocking execution", name)
+                return {
+                    "success": False,
+                    "error_type": "tool_disabled",
+                    "error": f"Tool '{name}' is currently disabled. Enable it in the Tools panel.",
+                }
+        except Exception:
+            pass  # settings unavailable — default to enabled
+
         # Call pre-execution approval hook for HIGH-risk tools
         success, result_or_error = approve_before_execution(
             registry=self,

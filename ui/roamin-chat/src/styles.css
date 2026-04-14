@@ -1179,3 +1179,40 @@ body {
   padding-bottom: 2px;
   opacity: 0.8;
 }
+
+/* --- Tool-picker toggle enhancements --- */
+
+.tool-disabled {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+/* --- Model pill — loading state --- */
+
+.model-pill-loading {
+  opacity: 0.7;
+  cursor: default;
+  border-color: var(--accent);
+  animation: pill-pulse 1s ease-in-out infinite;
+}
+
+@keyframes pill-pulse {
+  0%, 100% { border-color: var(--accent); }
+  50% { border-color: transparent; }
+}
+
+/* --- Unavailable model option --- */
+
+.model-unavailable {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* --- popover-option-check --- */
+
+.popover-option-check {
+  width: 16px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--accent);
+}

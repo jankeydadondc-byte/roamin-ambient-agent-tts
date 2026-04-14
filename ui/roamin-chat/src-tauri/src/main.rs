@@ -10,6 +10,7 @@ fn set_always_on_top(window: tauri::Window, on_top: bool) -> Result<(), String> 
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![set_always_on_top])
         .run(tauri::generate_context!())
         .expect("error while running Roamin Chat");

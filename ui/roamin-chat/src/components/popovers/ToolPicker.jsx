@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from "react";
-import { getTools } from "../../apiClient";
+import { getTools, toggleTool } from "../../apiClient";
 
 /**
- * Popover showing all registered agent tools (read-only in v1).
+ * Popover showing all registered agent tools with enable/disable toggles.
  */
 export default function ToolPicker({ onClose }) {
   const [tools, setTools] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [toggling, setToggling] = useState(null); // tool name being toggled
 
   useEffect(() => {
     getTools()
@@ -15,8 +16,34 @@ export default function ToolPicker({ onClose }) {
       .finally(() => setLoading(false));
   }, []);
 
+  const handleToggle = async (toolName, currentEnabled) => {
+    const newEnabled = !currentEnabled;
+
+    // Confirm enabling high-risk tools
+    const tool = tools.find((t) => t.name === toolName);
+    if (newEnabled && tool?.risk === "high") {
+      if (!window.confirm(`Enable "${toolName}"? This is a HIGH-risk tool.`)) return;
+    }
+
+    setToggling(toolName);
+    // Optimistic update
+    setTools((prev) =>
+      prev.map((t) => (t.name === toolName ? { ...t, enabled: newEnabled } : t))
+    );
+    try {
+      await toggleTool(toolName, newEnabled);
+    } catch {
+      // Revert on error
+      setTools((prev) =>
+        prev.map((t) => (t.name === toolName ? { ...t, enabled: currentEnabled } : t))
+      );
+    } finally {
+      setToggling(null);
+    }
+  };
+
   return (
-    <div className="popover" style={{ minWidth: 230 }}>
+    <div className="popover" style={{ minWidth: 260 }}>
       <div className="popover-title">Available Tools</div>
       {loading && (
         <div style={{ padding: "8px 12px", fontSize: 12, color: "var(--text-secondary)" }}>
@@ -25,9 +52,26 @@ export default function ToolPicker({ onClose }) {
       )}
       <div className="tool-list-scroll">
         {tools.map((t) => (
-          <div key={t.name} className="tool-row">
-            <span className="tool-row-name">{t.name}</span>
-            <span className={`popover-risk-badge risk-${t.risk}`}>{t.risk}</span>
+          <div key={t.name} className="tool-row" style={{ justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              <span className={`tool-row-name ${t.enabled === false ? "tool-disabled" : ""}`}>
+                {t.name}
+              </span>
+              <span className={`popover-risk-badge risk-${t.risk}`}>{t.risk}</span>
+            </div>
+            <label
+              className="toggle-switch"
+              style={{ flexShrink: 0, opacity: toggling === t.name ? 0.5 : 1 }}
+              title={t.enabled ? "Disable tool" : "Enable tool"}
+            >
+              <input
+                type="checkbox"
+                checked={t.enabled !== false}
+                disabled={toggling === t.name}
+                onChange={() => handleToggle(t.name, t.enabled !== false)}
+              />
+              <span className="slider" />
+            </label>
           </div>
         ))}
       </div>
@@ -36,9 +80,6 @@ export default function ToolPicker({ onClose }) {
           No tools available.
         </div>
       )}
-      <div style={{ padding: "6px 12px 8px", fontSize: 10, color: "var(--text-secondary)", borderTop: "1px solid var(--border)" }}>
-        Tool toggle coming in v2.
-      </div>
     </div>
   );
 }

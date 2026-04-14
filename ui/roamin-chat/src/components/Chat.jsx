@@ -52,6 +52,7 @@ export default function Chat({
   models = [],
   selectedModel = "",
   onModelChange,
+  onModelsRefresh,
   searchQuery = "",
   onSearchMatchCount,
   searchMatchIndex = 0,
@@ -460,6 +461,7 @@ export default function Chat({
           models={models}
           selectedModel={selectedModel}
           onModelChange={onModelChange}
+          onModelsRefresh={onModelsRefresh}
           agentMode={agentMode}
           onAgentModeChange={setAgentMode}
           permission={permission}
