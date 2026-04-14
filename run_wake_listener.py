@@ -167,11 +167,98 @@ def _warmup(stt: SpeechToText, tts: TextToSpeech, agent_loop: AgentLoop) -> None
     print(f"[Roamin] Warmup complete in {time.perf_counter() - t0:.1f}s")
 
 
+def _kill_orphaned_control_api() -> None:
+    """Kill any leftover control_api processes before starting a fresh one.
+
+    Checks the PID lock file first (fast path), then falls back to a
+    command-line scan via PowerShell so no orphan can slip through.
+    """
+    project_root = Path(__file__).parent
+    lock_file = project_root / "logs" / "_control_api.lock"
+    discovery_file = project_root / ".loom" / "control_api_port.json"
+
+    pids_to_kill: set[int] = set()
+
+    # Fast path: PID lock file
+    if lock_file.exists():
+        try:
+            pid = int(lock_file.read_text().strip())
+            if pid > 0 and pid != os.getpid():
+                pids_to_kill.add(pid)
+        except (ValueError, OSError):
+            pass
+
+    # Fast path: discovery file
+    if discovery_file.exists():
+        try:
+            import json as _json
+
+            data = _json.loads(discovery_file.read_text())
+            pid = int(data.get("pid", 0))
+            if pid > 0 and pid != os.getpid():
+                pids_to_kill.add(pid)
+        except Exception:
+            pass
+
+    # Fallback: PowerShell command-line scan for any stray control_api processes
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Get-CimInstance Win32_Process "
+                "| Where-Object { $_.CommandLine -like '*run_control_api.py*' } "
+                "| Select-Object -ExpandProperty ProcessId",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        for line in result.stdout.splitlines():
+            try:
+                pid = int(line.strip())
+                if pid > 0 and pid != os.getpid():
+                    pids_to_kill.add(pid)
+            except ValueError:
+                pass
+    except Exception:
+        pass
+
+    for pid in pids_to_kill:
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                timeout=5,
+            )
+            print(f"[Control API] Killed orphaned process PID {pid}", flush=True)
+        except Exception:
+            pass
+
+    # Clean up stale lock/discovery files
+    for f in (lock_file, discovery_file):
+        try:
+            if f.exists():
+                f.unlink()
+        except OSError:
+            pass
+
+
 def _start_control_api(log_dir: Path) -> subprocess.Popen | None:
-    """Launch the Control API as a sidecar subprocess. Returns the process or None."""
+    """Launch the Control API as a sidecar subprocess. Returns the process or None.
+
+    Kills any orphaned control_api processes first so there is never more
+    than one instance running at a time.
+    """
     api_script = Path(__file__).parent / "run_control_api.py"
     if not api_script.exists():
         return None
+
+    # Ensure no orphaned control_api survives from a previous crash
+    _kill_orphaned_control_api()
+
     api_log = open(log_dir / "control_api.log", "a", buffering=1, encoding="utf-8")  # noqa: SIM115
     try:
         proc = subprocess.Popen(
