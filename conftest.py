@@ -1,9 +1,10 @@
-"""Root conftest.py — ensures venv packages take priority over local stub directories,
+"""Root conftest.py — ensures venv packages take priority over stub directories,
 and skips @pytest.mark.integration tests unless -m integration is explicitly requested.
 
-chromadb/, fastapi/, numpy/ exist in the project root as test stubs. With
---import-mode=importlib (pytest.ini) these are no longer prepended, but we keep the
-sys.modules invalidation here as a belt-and-suspenders guard.
+Test stubs live in tests/_stubs/ (not the project root) so they never shadow
+real venv packages when running scripts directly (run_wake_listener.py etc.).
+The stubs dir is appended at the END of sys.path so it only activates if the
+real package is absent from the venv.
 """
 
 import sys
@@ -12,10 +13,10 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).parent.resolve()
+_STUBS = _ROOT / "tests" / "_stubs"
 
-# Remove all sys.path entries that resolve to the project root, then re-add at end.
-# Python prepends '' (cwd) to sys.path when run with -m, which causes local stub
-# directories (chromadb/, fastapi/, numpy/) to shadow real venv packages.
+# Remove project-root entries so the root itself isn't at sys.path[0].
+# Python prepends '' (cwd) when run with -m; remove that too.
 _cleaned = []
 for _p in sys.path:
     try:
@@ -24,22 +25,23 @@ for _p in sys.path:
         _resolved = None
     if _resolved != _ROOT:
         _cleaned.append(_p)
+
+# Re-add project root at the END, then stubs as absolute last resort.
 _cleaned.append(str(_ROOT))
+if str(_STUBS) not in _cleaned:
+    _cleaned.append(str(_STUBS))
 sys.path[:] = _cleaned
 
 # Invalidate any stub imports that may have been cached before conftest ran.
 for _mod in list(sys.modules):
-    if _mod == "fastapi" or _mod.startswith("fastapi."):
-        del sys.modules[_mod]
-    if _mod == "chromadb" or _mod.startswith("chromadb."):
-        del sys.modules[_mod]
-    if _mod == "numpy" or _mod.startswith("numpy."):
+    if _mod in ("fastapi", "chromadb", "numpy") or any(
+        _mod.startswith(f"{pkg}.") for pkg in ("fastapi", "chromadb", "numpy")
+    ):
         del sys.modules[_mod]
 
 
 def pytest_collection_modifyitems(config, items):
     """Skip @pytest.mark.integration tests unless -m integration was requested."""
-    # If the user explicitly filtered with -m (e.g. -m integration), respect it.
     if config.option.markexpr:
         return
     skip_integration = pytest.mark.skip(reason="integration test — run with: pytest -m integration")
