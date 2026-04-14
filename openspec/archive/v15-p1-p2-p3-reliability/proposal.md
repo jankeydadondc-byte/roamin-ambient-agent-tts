@@ -575,3 +575,6 @@ pytest -m integration -v
 | #8 | ⚠️ | `task_runs` table may not exist if schema is old — add `IF NOT EXISTS` guard |
 | #69 | ⚠️ | `_is_privacy_window_active()` may not exist — verify before calling |
 | #71 | ⚠️ | Singleton `ScreenObserver` — if it holds state that should reset per cycle, audit |
+
+---
+**Status: COMPLETE** — committed bd2108f (2026-04-13), 436 tests passing.
