@@ -50,14 +50,22 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Roamin Control API (dev)", lifespan=lifespan)
 
-# Restrict CORS to known local origins — wildcard removed to reduce CSRF surface
+# Restrict CORS to known local origins — wildcard removed to reduce CSRF surface.
+# Tauri WebView origins vary by platform/version:
+#   Windows WebView2 (Tauri v2): tauri://localhost  or  https://tauri.localhost
+#   Tauri v1 legacy:             tauri://localhost
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        # Browser control panel (Vite dev server)
         "http://localhost",
         "http://localhost:5173",
         "http://127.0.0.1",
         "http://127.0.0.1:5173",
+        # Tauri chat app (roamin-chat) — Tauri v2 dev + production
+        "http://localhost:1420",
+        "tauri://localhost",
+        "https://tauri.localhost",
     ],
     allow_credentials=True,
     allow_methods=["*"],
