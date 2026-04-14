@@ -62,7 +62,10 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1",
         "http://127.0.0.1:5173",
-        # Tauri chat app (roamin-chat) — Tauri v2 dev + production
+        # Tauri chat app (roamin-chat) — Tauri v2 / WebView2 origins
+        # Windows WebView2 (Tauri v2) uses http://tauri.localhost as the actual
+        # browser origin — NOT tauri://localhost or https://tauri.localhost.
+        "http://tauri.localhost",
         "http://localhost:1420",
         "tauri://localhost",
         "https://tauri.localhost",
