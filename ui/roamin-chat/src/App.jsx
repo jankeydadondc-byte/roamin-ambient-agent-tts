@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import Chat from "./components/Chat";
-import VolumeControl from "./components/VolumeControl";
+import SettingsPanel from "./components/SettingsPanel";
+import SessionSidebar from "./components/SessionSidebar";
+import SearchBar from "./components/SearchBar";
 import {
   getModels,
   selectModel,
-  setScreenshots as apiSetScreenshots,
+  resetChat,
   connectEvents,
   onConnectionChange,
 } from "./apiClient";
+import { exportChat } from "./utils/exportChat";
 
-// Maps connection state → { color, label } for the status dot
 const CONN_STYLES = {
   connecting:   { color: "#f5a623", label: "Connecting…" },
   connected:    { color: "#4caf50", label: "Connected" },
@@ -17,24 +19,35 @@ const CONN_STYLES = {
 };
 
 export default function App() {
-  const [models, setModels]                   = useState([]);
-  const [modelsLoading, setModelsLoading]     = useState(false);
-  const [selectedModel, setSelectedModel]     = useState("");
-  const [screenshotsEnabled, setScreenshotsEnabled] = useState(true);
-  const [showSettings, setShowSettings]       = useState(false);
-  const [connState, setConnState]             = useState("connecting");
+  const [models, setModels]               = useState([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [connState, setConnState]         = useState("connecting");
 
-  // Load (or reload) the model list whenever the connection becomes "connected".
-  // This handles the race where the Tauri app starts before Roamin is ready:
-  // the initial fetch fails/returns [], but once the WS reconnect fires and
-  // the state becomes "connected" we pick up the real list.
+  // Panel visibility
+  const [showSettings, setShowSettings]   = useState(false);
+  const [showHistory, setShowHistory]     = useState(false);
+
+  // Search
+  const [showSearch, setShowSearch]       = useState(false);
+  const [searchQuery, setSearchQuery]     = useState("");
+  const [searchMatchIndex, setSearchMatchIndex] = useState(0);
+  const [searchMatchCount, setSearchMatchCount] = useState(0);
+
+  // Active session for history sidebar
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+
+  // Expose messages ref so App can drive export without prop-drilling
+  const messagesRef = useRef([]);
+
+  const prevConnState = useRef(null);
+
   const loadModels = useCallback(() => {
     setModelsLoading(true);
     getModels()
       .then((data) => {
         setModels(data.models || []);
-        // Pre-select the first model if nothing is selected yet
-        if (!selectedModel && data.models && data.models.length > 0) {
+        if (!selectedModel && data.models?.length > 0) {
           setSelectedModel(data.models[0].id || "");
         }
       })
@@ -42,126 +55,165 @@ export default function App() {
       .finally(() => setModelsLoading(false));
   }, [selectedModel]);
 
-  // Track previous connection state so we only reload on transitions to "connected"
-  const prevConnState = useRef(null);
-
   useEffect(() => {
     const unsub = onConnectionChange((state) => {
       setConnState(state);
-
-      // Reload models whenever we (re)connect
       if (state === "connected" && prevConnState.current !== "connected") {
         loadModels();
       }
       prevConnState.current = state;
     });
-
-    // Also kick off an immediate model load in case we're already connected
     loadModels();
-
-    // Connect to WebSocket for real-time events
-    const conn = connectEvents((event) => {
-      if (event.type === "chat_response") {
-        // Handled in Chat component via its own state
-      }
-    });
-
-    return () => {
-      unsub();
-      conn.close();
-    };
+    const conn = connectEvents(() => {});
+    return () => { unsub(); conn.close(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keyboard shortcut: Ctrl+F → open search
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+        e.preventDefault();
+        setShowSearch((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  const handleModelChange = (modelId) => {
+    setSelectedModel(modelId);
+    selectModel(modelId).catch((err) =>
+      console.error("[App] Model switch failed:", err)
+    );
+  };
+
+  const handleNewChat = async () => {
+    try {
+      await resetChat();
+    } catch (_) {}
+    setCurrentSessionId(null);
+  };
+
+  const handleExport = () => {
+    exportChat(messagesRef.current);
+  };
 
   const connStyle = CONN_STYLES[connState] || CONN_STYLES.disconnected;
 
   return (
     <div className="app">
+      {/* ── Header ── */}
       <header className="header">
         <h1>Roamin</h1>
         <div className="header-controls">
-          {/* Connection status dot */}
+          {/* Connection dot */}
           <span
             title={connStyle.label}
             style={{
               display: "inline-block",
-              width: 10,
-              height: 10,
+              width: 9,
+              height: 9,
               borderRadius: "50%",
               background: connStyle.color,
-              marginRight: 6,
               flexShrink: 0,
-              boxShadow:
-                connState === "connected" ? `0 0 4px ${connStyle.color}` : "none",
+              boxShadow: connState === "connected" ? `0 0 4px ${connStyle.color}` : "none",
               transition: "background 0.3s, box-shadow 0.3s",
             }}
           />
 
-          {/* Model selector — shows once models are loaded, or a loading hint */}
-          {modelsLoading ? (
-            <span style={{ fontSize: 11, opacity: 0.5, marginRight: 6 }}>
-              Loading…
-            </span>
-          ) : models.length > 0 ? (
-            <select
-              value={selectedModel}
-              onChange={(e) => {
-                const modelId = e.target.value;
-                setSelectedModel(modelId);
-                selectModel(modelId).catch((err) =>
-                  console.error("[App] Model switch failed:", err)
-                );
-              }}
-              title="Select model"
-            >
-              <option value="">Auto</option>
-              {models.map((m) => (
-                <option key={m.id || m} value={m.id || m}>
-                  {m.name || m.id || m}
-                </option>
-              ))}
-            </select>
-          ) : connState === "disconnected" ? (
-            <span
-              style={{
-                fontSize: 11,
-                opacity: 0.6,
-                marginRight: 4,
-                cursor: "pointer",
-                textDecoration: "underline",
-              }}
-              title="Retry connection"
-              onClick={loadModels}
-            >
-              Retry
-            </span>
-          ) : null}
-
+          {/* New chat */}
           <button
-            onClick={() => setShowSettings(!showSettings)}
-            title="Settings"
+            className="header-icon-btn"
+            title="New chat"
+            onClick={handleNewChat}
           >
-            {showSettings ? "✕" : "⋯"}
+            ＋
+          </button>
+
+          {/* History sidebar */}
+          <button
+            className={`header-icon-btn ${showHistory ? "active" : ""}`}
+            title="Session history"
+            onClick={() => setShowHistory((v) => !v)}
+          >
+            ☰
+          </button>
+
+          {/* In-chat search */}
+          <button
+            className={`header-icon-btn ${showSearch ? "active" : ""}`}
+            title="Search in chat (Ctrl+F)"
+            onClick={() => setShowSearch((v) => !v)}
+          >
+            🔍
+          </button>
+
+          {/* Export */}
+          <button
+            className="header-icon-btn"
+            title="Export conversation"
+            onClick={handleExport}
+          >
+            ↓
+          </button>
+
+          {/* Settings slide-over */}
+          <button
+            className={`header-icon-btn ${showSettings ? "active" : ""}`}
+            title="Settings"
+            onClick={() => setShowSettings((v) => !v)}
+          >
+            ⚙
           </button>
         </div>
       </header>
 
-      <Chat />
+      {/* ── Search bar (slides down from header) ── */}
+      {showSearch && (
+        <SearchBar
+          query={searchQuery}
+          onChange={(q) => { setSearchQuery(q); setSearchMatchIndex(0); }}
+          matchCount={searchMatchCount}
+          matchIndex={searchMatchIndex}
+          onPrev={() => setSearchMatchIndex((i) => Math.max(0, i - 1))}
+          onNext={() => setSearchMatchIndex((i) => Math.min(searchMatchCount - 1, i + 1))}
+          onClose={() => { setShowSearch(false); setSearchQuery(""); }}
+        />
+      )}
 
+      {/* ── Main chat ── */}
+      <Chat
+        models={models}
+        selectedModel={selectedModel}
+        onModelChange={handleModelChange}
+        searchQuery={searchQuery}
+        onSearchMatchCount={setSearchMatchCount}
+        searchMatchIndex={searchMatchIndex}
+        onMessagesChange={(msgs) => { messagesRef.current = msgs; }}
+        currentSessionId={currentSessionId}
+        onSessionIdChange={setCurrentSessionId}
+        onNewChat={handleNewChat}
+      />
+
+      {/* ── Overlay panels ── */}
       {showSettings && (
-        <div className="settings-panel">
-          <VolumeControl />
-          <div className="settings-row">
-            <label>Screenshots</label>
-            <input
-              type="checkbox"
-              checked={screenshotsEnabled}
-              onChange={(e) => {
-                setScreenshotsEnabled(e.target.checked);
-                apiSetScreenshots(e.target.checked).catch(() => {});
-              }}
-            />
-          </div>
-        </div>
+        <SettingsPanel
+          onClose={() => setShowSettings(false)}
+          selectedModel={selectedModel}
+          onModelChange={handleModelChange}
+          models={models}
+        />
+      )}
+
+      {showHistory && (
+        <SessionSidebar
+          currentSessionId={currentSessionId}
+          onSessionSelect={(id) => {
+            setCurrentSessionId(id);
+          }}
+          onNewChat={handleNewChat}
+          onClose={() => setShowHistory(false)}
+        />
       )}
     </div>
   );

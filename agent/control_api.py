@@ -654,18 +654,25 @@ async def chat_send(request: Request) -> dict[str, Any]:
         session.add("user", message)
 
         # Run the full pipeline (blocking — offload to thread for async)
-        reply = await asyncio.to_thread(
+        # return_reasoning=True captures <think> blocks before they are stripped
+        raw = await asyncio.to_thread(
             process_message,
             message,
             session=session,
             include_screen=include_screen,
             mode="chat",
+            return_reasoning=True,
         )
+        # return_reasoning=True always returns a dict — cast to satisfy mypy
+        result: dict[str, Any] = raw if isinstance(raw, dict) else {"reply": raw, "reasoning": None}
+        reply = result["reply"]
+        reasoning = result.get("reasoning")
 
         await _broadcast({"type": "chat_response", "data": {"message": reply}})
 
         return {
             "response": reply,
+            "reasoning": reasoning,
             "session_id": session.session_id,
         }
     except Exception as e:
@@ -697,6 +704,83 @@ async def chat_pending() -> dict[str, Any]:
         return {"messages": [], "count": 0}
     except Exception:
         return {"messages": [], "count": 0}
+
+
+@app.get("/sessions")
+async def list_sessions() -> dict[str, Any]:
+    """List all stored chat sessions with metadata for the session history sidebar."""
+    try:
+        import sqlite3
+
+        from agent.core.paths import get_project_root
+        from agent.core.voice.session import get_session
+
+        db_path = get_project_root() / "agent" / "core" / "memory" / "roamin_memory.db"
+        if not db_path.exists():
+            return {"sessions": [], "current_session_id": None}
+
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                session_id,
+                MIN(timestamp) AS started_at,
+                MAX(timestamp) AS last_at,
+                COUNT(*) AS message_count,
+                (
+                    SELECT content FROM conversation_history c2
+                    WHERE c2.session_id = c.session_id
+                    ORDER BY timestamp ASC LIMIT 1
+                ) AS first_message
+            FROM conversation_history c
+            GROUP BY session_id
+            ORDER BY last_at DESC
+            LIMIT 100
+            """
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        sessions = [
+            {
+                "session_id": r["session_id"],
+                "started_at": r["started_at"],
+                "last_at": r["last_at"],
+                "message_count": r["message_count"],
+                "first_message": (r["first_message"] or "")[:120],
+            }
+            for r in rows
+        ]
+
+        current = get_session()
+        return {"sessions": sessions, "current_session_id": current.session_id}
+    except Exception as e:
+        logger.warning("GET /sessions failed: %s", e)
+        return {"sessions": [], "current_session_id": None}
+
+
+@app.get("/tools")
+async def get_tools() -> dict[str, Any]:
+    """List all registered agent tools with name, description, and risk level."""
+    try:
+        from agent.core.tool_registry import ToolRegistry
+
+        registry = ToolRegistry()
+        tools = [
+            {
+                "name": name,
+                "description": meta.get("description", ""),
+                "risk": meta.get("risk", "low"),
+                "enabled": True,  # Toggle UI is v2 — all registered tools are active
+            }
+            for name, meta in registry._tools.items()
+        ]
+        return {"tools": sorted(tools, key=lambda t: t["name"])}
+    except Exception as e:
+        logger.warning("GET /tools failed: %s", e)
+        return {"tools": []}
 
 
 # ---------------------------------------------------------------------------

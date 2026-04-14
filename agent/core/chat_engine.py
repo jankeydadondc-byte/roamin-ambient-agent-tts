@@ -343,7 +343,8 @@ def process_message(
     no_think: bool = True,
     max_tokens: int = 512,
     mode: str = "chat",
-) -> str:
+    return_reasoning: bool = False,
+) -> "str | dict":
     """Run the full Roamin response pipeline and return a reply string.
 
     This function is the single source of truth for turning a user
@@ -486,6 +487,10 @@ def process_message(
         reply = "I can't reach my model right now. Is LM Studio running?"
 
     # ── 6. Clean up response ──
+    # Capture reasoning block before stripping (for UI display in chat overlay)
+    _think_match = re.search(r"<think>(.*?)</think>", reply, flags=re.DOTALL)
+    _reasoning = _think_match.group(1).strip() if _think_match else None
+
     reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
     reply = re.sub(r"</?[\w]+>", "", reply).strip()
     reply = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", reply)
@@ -504,4 +509,6 @@ def process_message(
     # ── 7. Update session ──
     session.add("assistant", reply)
 
+    if return_reasoning:
+        return {"reply": reply, "reasoning": _reasoning}
     return reply

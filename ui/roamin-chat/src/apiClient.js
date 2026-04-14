@@ -159,12 +159,22 @@ async function _fetch(path, options = {}) {
 
 // --- Chat endpoints ---
 
-export async function sendMessage(message, includeScreen = false) {
-  const res = await _fetch("/chat", {
+/**
+ * Send a chat message to Roamin.
+ * @param {string} message
+ * @param {boolean} includeScreen - whether to attach a screenshot
+ * @param {AbortSignal|null} signal - optional AbortController signal for stop-generation
+ * @param {object} extra - optional extra payload fields (contextAttachment, agentMode, etc.)
+ */
+export async function sendMessage(message, includeScreen = false, signal = null, extra = {}) {
+  const fetchOptions = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, include_screen: includeScreen }),
-  });
+    body: JSON.stringify({ message, include_screen: includeScreen, ...extra }),
+  };
+  if (signal) fetchOptions.signal = signal;
+
+  const res = await _fetch("/chat", fetchOptions);
   try {
     const data = await res.json();
     console.log("[apiClient] /chat response:", data);
@@ -246,6 +256,36 @@ export async function selectModel(modelId, task = "default") {
 export async function getStatus() {
   const res = await _fetch("/status");
   return res.json();
+}
+
+/** Return the active model routing table from the backend. */
+export async function getCurrentModel() {
+  try {
+    const res = await _fetch("/models/current");
+    return res.json();
+  } catch (_) {
+    return {};
+  }
+}
+
+/** List all registered agent tools with name, description, and risk level. */
+export async function getTools() {
+  try {
+    const res = await _fetch("/tools");
+    return res.json();
+  } catch (_) {
+    return { tools: [] };
+  }
+}
+
+/** List all stored chat sessions for the history sidebar. */
+export async function getSessions() {
+  try {
+    const res = await _fetch("/sessions");
+    return res.json();
+  } catch (_) {
+    return { sessions: [], current_session_id: null };
+  }
 }
 
 export async function getPendingNotifications() {
