@@ -28,14 +28,11 @@ except ImportError:
 class SpeechToText:
     """STT engine using Whisper for transcription."""
 
-    # Whisper initial_prompt primes the decoder with proper nouns and domain
-    # vocabulary so it biases toward correct spellings instead of phonetic
-    # guesses like "A Roman" for "Roamin".
-    _INITIAL_PROMPT = (
-        "Roamin is an AI voice assistant. "
-        "Proper nouns: Roamin, Asherre, Mem Palace, MemPalace. "
-        "The user speaks commands to Roamin."
-    )
+    # Whisper initial_prompt primes the decoder with proper nouns so it biases
+    # toward correct spellings instead of phonetic guesses like "A Roman".
+    # Keep it SHORT — a long prompt causes Whisper to hallucinate the prompt
+    # text verbatim when audio is quiet or ambiguous.
+    _INITIAL_PROMPT = "Roamin, Asherre, MemPalace."
 
     def __init__(self, model_name: str = "base") -> None:
         self._model = None
