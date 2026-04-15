@@ -1026,7 +1026,7 @@ body {
   border-radius: 8px;
   min-width: 180px;
   max-width: 260px;
-  z-index: 300;
+  z-index: 1000;
   box-shadow: 0 6px 20px rgba(0,0,0,0.5);
   animation: popover-in 0.12s ease-out;
   overflow: hidden;
