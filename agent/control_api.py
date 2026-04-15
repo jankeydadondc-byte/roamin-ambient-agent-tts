@@ -983,14 +983,13 @@ async def chat_stream(request: Request) -> StreamingResponse:
             provider = model_cfg.get("provider", "")
             sid = session.session_id
 
-            yield f'event: thinking_start\ndata: {{"session_id": "{sid}"}}\n\n'
-            t0 = _time.monotonic()
-
             # ── llama_cpp streaming ──
             if provider == "llama_cpp":
                 from agent.core.llama_backend import stream_chat_completion
 
                 in_think = False
+                think_started = False  # emit thinking_start only when <think> is first seen
+                t0 = 0.0  # captured lazily when thinking actually begins
                 full_reply_parts: list[str] = []
                 full_think_parts: list[str] = []
 
@@ -1047,6 +1046,11 @@ async def chat_stream(request: Request) -> StreamingResponse:
                                     full_reply_parts.append(before)
                                 buf = buf[think_start + 7 :]  # skip <think>
                                 in_think = True
+                                # Emit thinking_start on first <think> detection only
+                                if not think_started:
+                                    think_started = True
+                                    t0 = _time.monotonic()
+                                    yield f'event: thinking_start\ndata: {{"session_id": "{sid}"}}\n\n'
                         else:
                             think_end = buf.find("</think>")
                             if think_end == -1:
@@ -1095,6 +1099,8 @@ async def chat_stream(request: Request) -> StreamingResponse:
                 }
 
                 in_think = False
+                think_started = False  # emit thinking_start only when <think> is first seen
+                t0 = 0.0  # captured lazily when thinking actually begins
                 full_reply_parts: list[str] = []
                 secs = 0.0
 
@@ -1126,6 +1132,10 @@ async def chat_stream(request: Request) -> StreamingResponse:
                         # Check for think tags
                         if "<think>" in delta and not in_think:
                             in_think = True
+                            if not think_started:
+                                think_started = True
+                                t0 = _time.monotonic()
+                                yield f'event: thinking_start\ndata: {{"session_id": "{sid}"}}\n\n'
                             before, _, after = delta.partition("<think>")
                             if before:
                                 safe = before.replace('"', '\\"').replace("\n", "\\n")

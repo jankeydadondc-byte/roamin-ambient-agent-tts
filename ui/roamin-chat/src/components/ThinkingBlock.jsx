@@ -10,18 +10,9 @@ import React, { useState, useRef, useEffect } from "react";
 export default function ThinkingBlock({ reasoning, thinkSeconds, streaming = false }) {
   if (!reasoning && !streaming) return null;
 
-  const [expanded, setExpanded] = useState(streaming); // auto-expand while streaming
+  const [expanded, setExpanded] = useState(false); // always start collapsed
   const contentRef  = useRef(null);
   const [contentHeight, setContentHeight] = useState(0);
-
-  // Auto-collapse when streaming completes
-  useEffect(() => {
-    if (!streaming && expanded) {
-      // brief delay so user sees the final content before collapsing
-      const t = setTimeout(() => setExpanded(false), 600);
-      return () => clearTimeout(t);
-    }
-  }, [streaming]); // eslint-disable-line
 
   // Remeasure height whenever content changes
   useEffect(() => {
@@ -47,12 +38,12 @@ export default function ThinkingBlock({ reasoning, thinkSeconds, streaming = fal
     <div className={`thinking-block-v2 ${expanded ? "expanded" : ""} ${streaming ? "streaming" : ""}`}>
       <div
         className="thinking-header"
-        onClick={() => !streaming && setExpanded((x) => !x)}
+        onClick={() => setExpanded((x) => !x)}
         role="button"
         tabIndex={0}
-        style={{ cursor: streaming ? "default" : "pointer" }}
+        style={{ cursor: "pointer" }}
         onKeyDown={(e) => {
-          if (!streaming && (e.key === "Enter" || e.key === " ")) setExpanded((x) => !x);
+          if (e.key === "Enter" || e.key === " ") setExpanded((x) => !x);
         }}
       >
         <span className="thinking-icon" style={{ animation: streaming ? "thinking-pulse 1.2s ease-in-out infinite" : "none" }}>

@@ -217,7 +217,7 @@ export default function Chat({
 
       let thinkText = "";
       let replyText = "";
-      let thinkStreaming = false;
+      let thinkStreaming = false; // eslint-disable-line no-unused-vars
 
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
@@ -231,36 +231,43 @@ export default function Chat({
         if (done) break;
         buf += decoder.decode(value, { stream: true });
 
-        const lines = buf.split("\n");
-        buf = lines.pop(); // keep incomplete last line
+        // Split on SSE event boundary (\n\n) — each entry is one complete event.
+        // This ensures event: and data: lines that span different TCP chunks are
+        // always processed together, never with a stale or reset evtType.
+        const events = buf.split("\n\n");
+        buf = events.pop(); // last fragment is incomplete — keep buffered
 
-        let evtType = "";
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            evtType = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            let payload;
-            try { payload = JSON.parse(line.slice(6)); } catch (_) { continue; }
+        for (const rawEvent of events) {
+          let evtType = ""; // scoped per-event, not per-chunk
+          let dataStr  = "";
+          for (const line of rawEvent.split("\n")) {
+            if (line.startsWith("event: ")) evtType = line.slice(7).trim();
+            else if (line.startsWith("data: "))  dataStr  = line.slice(6);
+          }
+          if (!evtType || !dataStr) continue;
 
-            if (evtType === "thinking_start") {
-              thinkStreaming = true;
-              _updateAssistant({ reasoning: "", thinkSeconds: null, _thinkStreaming: true });
-            } else if (evtType === "thinking_delta") {
-              thinkText += payload.text || "";
-              _updateAssistant({ reasoning: thinkText, _thinkStreaming: true });
-            } else if (evtType === "thinking_stop") {
-              thinkStreaming = false;
-              _updateAssistant({ thinkSeconds: payload.seconds || null, _thinkStreaming: false });
-            } else if (evtType === "content_delta") {
-              replyText += payload.text || "";
-              _updateAssistant({ text: replyText });
-            } else if (evtType === "done") {
-              const finalArtifacts = extractArtifacts(replyText);
-              if (finalArtifacts.length > 0) setArtifacts((p) => [...p, ...finalArtifacts]);
-              _updateAssistant({ text: replyText || "Done.", _streaming: false, artifacts: finalArtifacts });
-            } else if (evtType === "error") {
-              _updateAssistant({ text: `Error: ${payload.message || "unknown"}`, _streaming: false });
-            }
+          let payload;
+          try { payload = JSON.parse(dataStr); } catch (_) { continue; }
+
+          if (evtType === "thinking_start") {
+            thinkStreaming = true;
+            _updateAssistant({ reasoning: "", thinkSeconds: null, _thinkStreaming: true });
+          } else if (evtType === "thinking_delta") {
+            thinkText += payload.text || "";
+            _updateAssistant({ reasoning: thinkText, _thinkStreaming: true });
+          } else if (evtType === "thinking_stop") {
+            thinkStreaming = false;
+            _updateAssistant({ thinkSeconds: payload.seconds || null, _thinkStreaming: false });
+          } else if (evtType === "content_delta") {
+            replyText += payload.text || "";
+            _updateAssistant({ text: replyText });
+          } else if (evtType === "done") {
+            const finalArtifacts = extractArtifacts(replyText);
+            if (finalArtifacts.length > 0) setArtifacts((p) => [...p, ...finalArtifacts]);
+            // Always clear _thinkStreaming on done — safety net if thinking_stop was missed
+            _updateAssistant({ text: replyText || "Done.", _streaming: false, _thinkStreaming: false, artifacts: finalArtifacts });
+          } else if (evtType === "error") {
+            _updateAssistant({ text: `Error: ${payload.message || "unknown"}`, _streaming: false, _thinkStreaming: false });
           }
         }
       }
@@ -410,8 +417,8 @@ export default function Chat({
               onMouseEnter={() => setHoveredMsgIdx(i)}
               onMouseLeave={() => setHoveredMsgIdx(null)}
             >
-              {/* Reasoning block (above the message, collapsed) */}
-              {msg.role === "assistant" && (msg.reasoning || msg._thinkStreaming) && (
+              {/* Reasoning block — only render once thinking_start has fired (reasoning !== null) */}
+              {msg.role === "assistant" && msg.reasoning !== null && (
                 <ThinkingBlock
                   reasoning={msg.reasoning}
                   thinkSeconds={msg.thinkSeconds}
