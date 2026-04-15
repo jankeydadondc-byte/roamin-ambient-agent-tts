@@ -44,12 +44,12 @@ export default function ProjectPicker({ value, onChange, onClose }) {
   const isTauri = Boolean(getTauriInvoke());
 
   return (
-    <div className="popover" style={{ minWidth: 260 }} onMouseDown={(e) => e.stopPropagation()}>
+    <div className="popover" style={{ minWidth: 330, maxWidth: 420 }} onMouseDown={(e) => e.stopPropagation()}>
       <div className="popover-title">Session Target</div>
       <div style={{ padding: "6px 12px 4px", fontSize: 11, color: "var(--text-secondary)" }}>
         Working directory prepended to chat context
       </div>
-      <div style={{ display: "flex", gap: 6, padding: "0 12px 6px" }}>
+      <div style={{ display: "flex", gap: 6, padding: "0 12px 6px", alignItems: "center" }}>
         <input
           className="popover-path-input"
           type="text"
@@ -58,7 +58,7 @@ export default function ProjectPicker({ value, onChange, onClose }) {
           onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") onClose(); }}
           placeholder="e.g. C:\AI\my-project"
           autoFocus={!isTauri}
-          style={{ flex: 1, margin: 0 }}
+          style={{ flex: 1, minWidth: 0, margin: 0 }}
         />
         {isTauri && (
           <button
@@ -66,7 +66,7 @@ export default function ProjectPicker({ value, onChange, onClose }) {
             title="Browse for folder"
             onClick={handleBrowse}
             disabled={browsing}
-            style={{ flexShrink: 0, fontSize: 14 }}
+            style={{ flexShrink: 0, minWidth: 32, fontSize: 14, padding: "3px 7px" }}
           >
             {browsing ? "…" : "📂"}
           </button>

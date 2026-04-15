@@ -37,14 +37,30 @@ _DEFAULTS: dict[str, Any] = {
     "default_model": "",
     "model_overrides": {},  # task -> model_id
     "tool_states": {},  # tool_name -> bool (True = enabled)
-    "model_params": {  # inference parameters applied to all models
+    "model_params": {  # inference parameters applied to all models (LM Studio parity)
+        # Sampling
         "temperature": 0.7,
         "top_p": 0.95,
         "top_k": 40,
         "repeat_penalty": 1.1,
         "max_tokens": 2048,
+        # Load-time params (require model reload to take effect)
         "context_length": 8192,
+        "n_gpu_layers": -1,  # -1 = all layers
+        "n_threads": -1,  # -1 = auto (physical cores)
+        "n_batch": 512,  # evaluation batch size
+        "n_parallel": 1,  # max concurrent predictions
+        "use_mlock": False,  # keep model in memory
+        "use_mmap": True,  # use mmap for loading
+        "flash_attn": True,  # flash attention
+        "offload_kv": True,  # offload KV cache to GPU
+        "rope_freq_base": 0.0,  # 0 = auto from model
+        "rope_freq_scale": 0.0,  # 0 = auto from model
+        "type_k": "f16",  # K-cache quantization type
+        "type_v": "f16",  # V-cache quantization type
+        "seed": -1,  # -1 = random
     },
+    "guardrail_tier": "balanced",  # off | relaxed | balanced | strict
     "model_scan_paths": [  # directories to scan for GGUF files
         r"C:\AI\roamin-ambient-agent-tts\models",
     ],

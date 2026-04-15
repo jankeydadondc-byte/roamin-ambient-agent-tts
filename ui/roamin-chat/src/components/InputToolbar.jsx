@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState } from "react";
 import AgentPicker from "./popovers/AgentPicker";
 import ToolPicker from "./popovers/ToolPicker";
 import PermissionToggle from "./popovers/PermissionToggle";
 import ProjectPicker from "./popovers/ProjectPicker";
 import ContextPicker from "./popovers/ContextPicker";
+import PopoverBackdrop from "./PopoverBackdrop";
 import { refreshModels } from "../apiClient";
 
 /**
@@ -29,32 +30,14 @@ export default function InputToolbar({
   const [selectingModel, setSelectingModel] = useState(null); // model id currently loading
   const [refreshing, setRefreshing] = useState(false);
 
-  // Close popover on outside click (capture phase to catch all clicks)
-  const toolbarRef = useRef(null);
-  useEffect(() => {
-    if (!openPopover) return;
-    const handler = (e) => {
-      if (toolbarRef.current && !toolbarRef.current.contains(e.target)) {
-        setOpenPopover(null);
-      }
-    };
-    const escHandler = (e) => {
-      if (e.key === "Escape") setOpenPopover(null);
-    };
-    document.addEventListener("mousedown", handler, true);
-    document.addEventListener("keydown", escHandler);
-    return () => {
-      document.removeEventListener("mousedown", handler, true);
-      document.removeEventListener("keydown", escHandler);
-    };
-  }, [openPopover]);
+  const closePopover = () => setOpenPopover(null);
 
   const toggle = (name) => setOpenPopover((cur) => (cur === name ? null : name));
 
   const modelLabel = selectingModel
     ? "Loading…"
     : selectedModel
-      ? (models.find((m) => (m.id || m) === selectedModel)?.name || selectedModel).slice(0, 20)
+      ? (visibleModels.find((m) => (m.id || m) === selectedModel)?.name || selectedModel).slice(0, 20)
       : "Auto";
 
   const permIcons = { default: "🔒", bypass: "🔓", autopilot: "⚡" };
@@ -81,8 +64,14 @@ export default function InputToolbar({
     }
   };
 
+  // Filter out llama_cpp models whose file is missing (status === unavailable)
+  const visibleModels = models.filter(
+    (m) => !(m.provider === "llama_cpp" && m.status === "unavailable")
+  );
+
   return (
-    <div className="input-toolbar" ref={toolbarRef}>
+    <div className="input-toolbar">
+      {openPopover && <PopoverBackdrop onClose={closePopover} />}
       {/* Add Context */}
       <div className="popover-wrapper">
         <button
@@ -204,24 +193,20 @@ export default function InputToolbar({
               <span className="model-checkmark">{!selectedModel ? "✓" : ""}</span>
               Auto
             </div>
-            {models.map((m) => {
+            {visibleModels.map((m) => {
               const id = m.id || m;
               const name = m.name || m.id || m;
-              const isUnavailable = m.status === "unavailable";
               return (
                 <div
                   key={id}
-                  className={`model-option ${selectedModel === id ? "selected" : ""} ${isUnavailable ? "model-unavailable" : ""}`}
-                  onClick={() => !isUnavailable && handleModelSelect(id)}
-                  title={isUnavailable ? "Not available in LM Studio" : name}
+                  className={`model-option ${selectedModel === id ? "selected" : ""}`}
+                  onClick={() => handleModelSelect(id)}
+                  title={name}
                 >
                   <span className="model-checkmark">{selectedModel === id ? "✓" : ""}</span>
-                  <span style={{ opacity: isUnavailable ? 0.45 : 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {name}
                   </span>
-                  {isUnavailable && (
-                    <span style={{ fontSize: 9, color: "var(--text-secondary)", marginLeft: "auto", flexShrink: 0 }}>offline</span>
-                  )}
                 </div>
               );
             })}

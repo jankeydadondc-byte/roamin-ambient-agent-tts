@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { sendMessage, getChatHistory, resetChat, getPendingNotifications } from "../apiClient";
+import { sendMessage, getChatHistory, resetChat, getPendingNotifications, getConnectionState } from "../apiClient";
 import ThinkingBlock from "./ThinkingBlock";
 import TokenBar from "./TokenBar";
 import InputToolbar from "./InputToolbar";
@@ -154,7 +154,6 @@ export default function Chat({
     const text = input.trim();
     if (!text || sending) return;
 
-    // Build extra payload
     const extra = {};
     if (projectPath) extra.project_path = projectPath;
     if (contextAttachment) extra.context_attachment = contextAttachment;
@@ -163,51 +162,149 @@ export default function Chat({
 
     setMessages((prev) => [...prev, { role: "user", text }]);
     setInput("");
-    setContextAttachment(""); // clear attachment after send
+    setContextAttachment("");
     setSending(true);
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
 
-    // Reset textarea height
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-    }
-
-    // Create abort controller for this request
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
+    // Unique sentinel index so we can update the in-progress message in place
+    const assistantIdx = { current: -1 };
+
+    const _addAssistant = (initial) => {
+      setMessages((prev) => {
+        assistantIdx.current = prev.length;
+        return [...prev, { role: "assistant", ...initial }];
+      });
+    };
+
+    const _updateAssistant = (patch) => {
+      setMessages((prev) => {
+        if (assistantIdx.current < 0 || assistantIdx.current >= prev.length) return prev;
+        const updated = [...prev];
+        updated[assistantIdx.current] = { ...updated[assistantIdx.current], ...patch };
+        return updated;
+      });
+    };
+
+    // ── Try SSE streaming first ──
+    let usedStream = false;
     try {
-      const result = await sendMessage(text, false, controller.signal, extra);
-      const reply = result.response || "Done.";
+      // Build base URL from current connection (pull from window global or fallback)
+      const base = window.__CONTROL_API_URL__
+        || (await (async () => {
+          for (let p = 8765; p <= 8775; p++) {
+            try {
+              const r = await fetch(`http://127.0.0.1:${p}/status`, { cache: "no-store", signal: controller.signal });
+              if (r.ok) return `http://127.0.0.1:${p}`;
+            } catch (_) {}
+          }
+          return null;
+        })());
 
-      // Extract any artifacts from the response
-      const newArtifacts = extractArtifacts(reply);
-      if (newArtifacts.length > 0) {
-        setArtifacts((prev) => [...prev, ...newArtifacts]);
+      if (!base) throw new Error("backend not found");
+
+      const resp = await fetch(`${base}/chat/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, include_screen: false, ...extra }),
+        signal: controller.signal,
+      });
+
+      if (!resp.ok) throw new Error(`stream HTTP ${resp.status}`);
+      usedStream = true;
+
+      let thinkText = "";
+      let replyText = "";
+      let thinkStreaming = false;
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      // Add placeholder message immediately
+      _addAssistant({ text: "", reasoning: null, thinkSeconds: null, _streaming: true });
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+
+        const lines = buf.split("\n");
+        buf = lines.pop(); // keep incomplete last line
+
+        let evtType = "";
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            evtType = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            let payload;
+            try { payload = JSON.parse(line.slice(6)); } catch (_) { continue; }
+
+            if (evtType === "thinking_start") {
+              thinkStreaming = true;
+              _updateAssistant({ reasoning: "", thinkSeconds: null, _thinkStreaming: true });
+            } else if (evtType === "thinking_delta") {
+              thinkText += payload.text || "";
+              _updateAssistant({ reasoning: thinkText, _thinkStreaming: true });
+            } else if (evtType === "thinking_stop") {
+              thinkStreaming = false;
+              _updateAssistant({ thinkSeconds: payload.seconds || null, _thinkStreaming: false });
+            } else if (evtType === "content_delta") {
+              replyText += payload.text || "";
+              _updateAssistant({ text: replyText });
+            } else if (evtType === "done") {
+              const finalArtifacts = extractArtifacts(replyText);
+              if (finalArtifacts.length > 0) setArtifacts((p) => [...p, ...finalArtifacts]);
+              _updateAssistant({ text: replyText || "Done.", _streaming: false, artifacts: finalArtifacts });
+            } else if (evtType === "error") {
+              _updateAssistant({ text: `Error: ${payload.message || "unknown"}`, _streaming: false });
+            }
+          }
+        }
       }
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          text: reply,
-          reasoning: result.reasoning || null,
-          thinkSeconds: result.think_seconds || null,
-          artifacts: newArtifacts,
-        },
-      ]);
     } catch (err) {
       if (err.name === "AbortError") {
-        // User stopped generation — leave partial state as-is
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", text: "(stopped)", reasoning: null },
-        ]);
+        if (assistantIdx.current >= 0) {
+          _updateAssistant({ text: "(stopped)", _streaming: false, _thinkStreaming: false });
+        } else {
+          setMessages((prev) => [...prev, { role: "assistant", text: "(stopped)" }]);
+        }
+        setSending(false);
+        abortControllerRef.current = null;
+        return;
+      }
+
+      // ── Fallback to non-streaming /chat ──
+      if (!usedStream) {
+        try {
+          const result = await sendMessage(text, false, controller.signal, extra);
+          const reply = result.response || "Done.";
+          const newArtifacts = extractArtifacts(reply);
+          if (newArtifacts.length > 0) setArtifacts((p) => [...p, ...newArtifacts]);
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              text: reply,
+              reasoning: result.reasoning || null,
+              thinkSeconds: result.think_seconds || null,
+              artifacts: newArtifacts,
+            },
+          ]);
+        } catch (fallbackErr) {
+          console.error("[Chat] fallback /chat failed:", fallbackErr);
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", text: `Error: ${fallbackErr.message || "Something went wrong."}` },
+          ]);
+        }
       } else {
-        console.error("[Chat] sendMessage failed:", err);
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", text: `Error: ${err.message || "Something went wrong."}` },
-        ]);
+        console.error("[Chat] stream error:", err);
+        if (assistantIdx.current >= 0) {
+          _updateAssistant({ text: `Error: ${err.message}`, _streaming: false });
+        }
       }
     } finally {
       setSending(false);
@@ -314,8 +411,12 @@ export default function Chat({
               onMouseLeave={() => setHoveredMsgIdx(null)}
             >
               {/* Reasoning block (above the message, collapsed) */}
-              {msg.role === "assistant" && msg.reasoning && (
-                <ThinkingBlock reasoning={msg.reasoning} thinkSeconds={msg.thinkSeconds} />
+              {msg.role === "assistant" && (msg.reasoning || msg._thinkStreaming) && (
+                <ThinkingBlock
+                  reasoning={msg.reasoning}
+                  thinkSeconds={msg.thinkSeconds}
+                  streaming={!!msg._thinkStreaming}
+                />
               )}
 
               <div className={`message ${msg.role}`}>

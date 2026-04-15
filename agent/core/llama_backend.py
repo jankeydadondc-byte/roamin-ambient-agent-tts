@@ -630,3 +630,43 @@ def get_llm_response(
     # Generation mode (no streaming — think blocks not used in raw prompts)
     backend = _REGISTRY.get_backend(capability)
     return backend.generate(prompt, max_tokens=max_tokens, temperature=temperature)
+
+
+def stream_chat_completion(
+    messages: list[dict],
+    capability: str = "default",
+    max_tokens: int = 2048,
+    temperature: float = 0.7,
+    top_p: float = 0.95,
+    top_k: int = 40,
+    repeat_penalty: float = 1.1,
+):
+    """Yield token strings from llama-cpp-python's streaming chat completion.
+
+    Uses the module-level _REGISTRY to get (or load) the backend, then calls
+    create_chat_completion with stream=True.  Meant to be run in a thread and
+    fed into an asyncio.Queue for SSE delivery.
+
+    Yields:
+        str: Individual token text chunks as they are generated.
+
+    Raises:
+        RuntimeError: If llama-cpp-python is unavailable or model fails to load.
+    """
+    backend = _REGISTRY.get_backend(capability)
+    if backend._llm is None:
+        raise RuntimeError("Model not loaded")
+
+    stream = backend._llm.create_chat_completion(
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        top_p=top_p,
+        top_k=top_k,
+        repeat_penalty=repeat_penalty,
+        stream=True,
+    )
+    for chunk in stream:
+        delta = chunk["choices"][0].get("delta", {}).get("content", "") or ""
+        if delta:
+            yield delta

@@ -22,7 +22,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from agent.core import paths, ports
 from agent.core.secrets import get_secret
@@ -153,21 +153,31 @@ async def _startup_init(application: FastAPI) -> None:
         from agent.core.model_router import ModelRouter
 
         router = ModelRouter()
-        application.state.models = [
-            {
-                "id": m["id"],
-                "name": m.get("name", m["id"]),
-                "status": (
-                    "available"
-                    if m.get("file_path") and Path(m["file_path"]).exists()
-                    else "available" if m.get("always_available") else "unavailable"
-                ),
-                "provider": m.get("provider", "unknown"),
-                "capabilities": m.get("capabilities", []),
-                "file_path": m.get("file_path", ""),
-            }
-            for m in router.list_models()
-        ]
+        built: list[dict[str, Any]] = []
+        for m in router.list_models():
+            fp = m.get("file_path", "")
+            provider = m.get("provider", "unknown")
+            # For llama_cpp models, check file existence.
+            # Drop entirely if the file is gone — don't show as "offline".
+            if provider == "llama_cpp":
+                if not fp or not Path(fp).exists():
+                    continue  # skip missing GGUF files
+                status = "available"
+            else:
+                # LM Studio / Ollama HTTP providers: file_path may be empty;
+                # keep them but mark unavailable until API confirms loaded.
+                status = "available" if m.get("always_available") else "unavailable"
+            built.append(
+                {
+                    "id": m["id"],
+                    "name": m.get("name", m["id"]),
+                    "status": status,
+                    "provider": provider,
+                    "capabilities": m.get("capabilities", []),
+                    "file_path": fp,
+                }
+            )
+        application.state.models = built
     except Exception:
         application.state.models = [{"id": "dummy-model", "name": "Dummy", "status": "idle"}]
 
@@ -410,10 +420,16 @@ async def scan_models_endpoint() -> dict[str, Any]:
 
         scanned = scan_models(scan_paths)
 
-        # Merge with existing models — keep existing entries, add net-new
+        # Merge with existing models — keep existing entries, add net-new;
+        # also drop existing llama_cpp entries whose files are now missing.
+        app.state.models = [
+            m
+            for m in app.state.models
+            if not (m.get("provider") == "llama_cpp" and m.get("file_path") and not Path(m["file_path"]).exists())
+        ]
         existing_paths: set[str] = {m.get("file_path", "") for m in app.state.models if m.get("file_path")}
         for model in scanned:
-            if model["file_path"] not in existing_paths:
+            if model["file_path"] not in existing_paths and Path(model["file_path"]).exists():
                 app.state.models.append(model)
 
         logger.info("Model scan complete: %d scanned, %d total", len(scanned), len(app.state.models))
@@ -438,13 +454,97 @@ async def set_model_params(request: Request) -> dict[str, Any]:
     from agent.core import settings_store
 
     body = await request.json()
-    allowed = {"temperature", "top_p", "top_k", "repeat_penalty", "max_tokens", "context_length"}
+    allowed = {
+        # Sampling
+        "temperature",
+        "top_p",
+        "top_k",
+        "repeat_penalty",
+        "max_tokens",
+        # Load-time
+        "context_length",
+        "n_gpu_layers",
+        "n_threads",
+        "n_batch",
+        "n_parallel",
+        "use_mlock",
+        "use_mmap",
+        "flash_attn",
+        "offload_kv",
+        "rope_freq_base",
+        "rope_freq_scale",
+        "type_k",
+        "type_v",
+        "seed",
+    }
     current = settings_store.get("model_params", {})
     for k, v in body.items():
         if k in allowed:
             current[k] = v
     settings_store.set_value("model_params", current)
+    # Also persist guardrail tier if provided
+    if "guardrail_tier" in body:
+        settings_store.set_value("guardrail_tier", body["guardrail_tier"])
     return {"params": current, "status": "ok"}
+
+
+@app.get("/system/specs")
+async def get_system_specs_endpoint() -> dict[str, Any]:
+    """Return CPU, RAM, and GPU hardware info."""
+    try:
+        from agent.core.system_specs import get_system_specs
+
+        return get_system_specs()
+    except Exception as e:
+        logger.warning("GET /system/specs failed: %s", e)
+        return {
+            "cpu_cores_physical": 1,
+            "cpu_cores_logical": 1,
+            "ram_total_gb": 0.0,
+            "ram_available_gb": 0.0,
+            "gpus": [],
+        }
+
+
+@app.post("/models/estimate")
+async def estimate_model_memory_endpoint(request: Request) -> dict[str, Any]:
+    """Estimate VRAM/RAM required for a model with given params.
+
+    Body: { model_id: str, params: { context_length, n_gpu_layers, flash_attn, type_k, type_v } }
+    """
+    try:
+        from agent.core.system_specs import estimate_model_memory
+
+        body = await request.json()
+        model_id = body.get("model_id", "")
+        params = body.get("params", {})
+
+        # Look up file path from state
+        fp = ""
+        for m in app.state.models:
+            if m.get("id") == model_id:
+                fp = m.get("file_path", "")
+                break
+
+        if not fp:
+            return {"error": f"No file_path for model '{model_id}'", "guardrail_verdict": "ok"}
+
+        from agent.core import settings_store
+
+        guardrail_tier = settings_store.get("guardrail_tier", "balanced")
+
+        return estimate_model_memory(
+            gguf_path=fp,
+            n_ctx=int(params.get("context_length", 8192)),
+            n_gpu_layers=int(params.get("n_gpu_layers", -1)),
+            flash_attn=bool(params.get("flash_attn", True)),
+            type_k=params.get("type_k", "f16"),
+            type_v=params.get("type_v", "f16"),
+            guardrail_tier=guardrail_tier,
+        )
+    except Exception as e:
+        logger.warning("POST /models/estimate failed: %s", e)
+        return {"error": str(e), "guardrail_verdict": "ok"}
 
 
 @app.get("/models/current")
@@ -825,6 +925,258 @@ async def chat_send(request: Request) -> dict[str, Any]:
     except Exception as e:
         logger.error("POST /chat failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/chat/stream")
+async def chat_stream(request: Request) -> StreamingResponse:
+    """SSE streaming chat endpoint.
+
+    Emits newline-delimited Server-Sent Events:
+      event: thinking_start  data: {"session_id":"..."}
+      event: thinking_delta  data: {"text":"..."}
+      event: thinking_stop   data: {"seconds": 12.3}
+      event: content_delta   data: {"text":"..."}
+      event: done            data: {"session_id":"..."}
+      event: error           data: {"message":"..."}
+    """
+    body = await request.json()
+    message = body.get("message", "").strip()
+    if not message:
+
+        async def _err():
+            yield 'event: error\ndata: {"message": "message is required"}\n\n'
+
+        return StreamingResponse(_err(), media_type="text/event-stream")
+
+    async def _generate():
+        import time as _time
+
+        try:
+            from agent.core import settings_store
+            from agent.core.model_router import ModelRouter
+            from agent.core.voice.session import get_session
+
+            session = get_session()
+            session.add("user", message)
+
+            params = settings_store.get("model_params", {})
+            max_tokens = int(params.get("max_tokens", 2048))
+
+            # Build system prompt (same as process_message but streaming)
+            from agent.core.chat_engine import build_memory_context, build_sidecar_context, extract_and_store_fact
+            from agent.core.memory import MemoryManager
+
+            memory = MemoryManager()
+            extract_and_store_fact(message, memory)
+            memory_ctx = build_memory_context(message, memory)
+            system_content = "Reply concisely in plain text. No markdown formatting.\n\n" + build_sidecar_context(
+                memory_context=memory_ctx,
+                session_context=session.get_context_block(),
+            )
+            messages = [
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": message},
+            ]
+
+            router = ModelRouter()
+            model_cfg = router.select("default")
+            provider = model_cfg.get("provider", "")
+            sid = session.session_id
+
+            yield f'event: thinking_start\ndata: {{"session_id": "{sid}"}}\n\n'
+            t0 = _time.monotonic()
+
+            # ── llama_cpp streaming ──
+            if provider == "llama_cpp":
+                from agent.core.llama_backend import stream_chat_completion
+
+                in_think = False
+                full_reply_parts: list[str] = []
+                full_think_parts: list[str] = []
+
+                # Run the synchronous generator in a thread, feeding tokens via a queue
+                token_queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+                def _run_llama_stream() -> None:
+                    try:
+                        for token in stream_chat_completion(
+                            messages=messages,
+                            capability="default",
+                            max_tokens=max_tokens,
+                            temperature=float(params.get("temperature", 0.7)),
+                            top_p=float(params.get("top_p", 0.95)),
+                            top_k=int(params.get("top_k", 40)),
+                            repeat_penalty=float(params.get("repeat_penalty", 1.1)),
+                        ):
+                            token_queue.put_nowait(token)
+                    except Exception as exc:  # noqa: BLE001
+                        token_queue.put_nowait(f"\x00ERR:{exc}")
+                    finally:
+                        token_queue.put_nowait(None)  # sentinel
+
+                loop = asyncio.get_event_loop()
+                loop.run_in_executor(None, _run_llama_stream)
+
+                buf = ""
+                while True:
+                    delta = await token_queue.get()
+                    if delta is None:
+                        break  # stream finished
+                    if isinstance(delta, str) and delta.startswith("\x00ERR:"):
+                        err_msg = delta[5:].replace('"', '\\"')
+                        yield f'event: error\ndata: {{"message": "{err_msg}"}}\n\n'
+                        return
+                    buf += delta
+
+                    # State machine: detect <think> / </think>
+                    while buf:
+                        if not in_think:
+                            think_start = buf.find("<think>")
+                            if think_start == -1:
+                                # No think tag — emit as content
+                                safe = buf.replace('"', '\\"').replace("\n", "\\n")
+                                yield f'event: content_delta\ndata: {{"text": "{safe}"}}\n\n'
+                                full_reply_parts.append(buf)
+                                buf = ""
+                            else:
+                                # Emit content before <think>
+                                before = buf[:think_start]
+                                if before:
+                                    safe = before.replace('"', '\\"').replace("\n", "\\n")
+                                    yield f'event: content_delta\ndata: {{"text": "{safe}"}}\n\n'
+                                    full_reply_parts.append(before)
+                                buf = buf[think_start + 7 :]  # skip <think>
+                                in_think = True
+                        else:
+                            think_end = buf.find("</think>")
+                            if think_end == -1:
+                                # Still inside thinking — emit delta
+                                safe = buf.replace('"', '\\"').replace("\n", "\\n")
+                                yield f'event: thinking_delta\ndata: {{"text": "{safe}"}}\n\n'
+                                full_think_parts.append(buf)
+                                buf = ""
+                            else:
+                                # Emit remaining thinking then close
+                                think_chunk = buf[:think_end]
+                                if think_chunk:
+                                    safe = think_chunk.replace('"', '\\"').replace("\n", "\\n")
+                                    yield f'event: thinking_delta\ndata: {{"text": "{safe}"}}\n\n'
+                                    full_think_parts.append(think_chunk)
+                                secs = round(_time.monotonic() - t0, 1)
+                                yield f'event: thinking_stop\ndata: {{"seconds": {secs}}}\n\n'
+                                in_think = False
+                                buf = buf[think_end + 8 :]  # skip </think>
+
+                # Close any open thinking block
+                if in_think:
+                    secs = round(_time.monotonic() - t0, 1)
+                    yield f'event: thinking_stop\ndata: {{"seconds": {secs}}}\n\n'
+
+                reply = "".join(full_reply_parts).strip()
+                session.add("assistant", reply)
+                yield f'event: done\ndata: {{"session_id": "{sid}"}}\n\n'
+
+            else:
+                # ── Ollama / LM Studio: forward their streaming and relay chunks ──
+                import json as _json
+
+                import requests as _requests
+
+                base_url = (
+                    "http://127.0.0.1:11434/api/chat"
+                    if provider == "ollama"
+                    else "http://127.0.0.1:1234/v1/chat/completions"
+                )
+                payload = {
+                    "model": model_cfg.get("model_id", model_cfg.get("id", "")),
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "stream": True,
+                }
+
+                in_think = False
+                full_reply_parts: list[str] = []
+                secs = 0.0
+
+                try:
+                    resp = await asyncio.to_thread(
+                        lambda: _requests.post(base_url, json=payload, stream=True, timeout=120)
+                    )
+                    for raw_line in resp.iter_lines():
+                        if not raw_line:
+                            continue
+                        line = raw_line.decode("utf-8", errors="replace")
+                        if line.startswith("data: "):
+                            line = line[6:]
+                        if line in ("[DONE]", ""):
+                            continue
+                        try:
+                            data = _json.loads(line)
+                        except Exception:
+                            continue
+
+                        delta = (
+                            data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            or data.get("message", {}).get("content", "")
+                            or ""
+                        )
+                        if not delta:
+                            continue
+
+                        # Check for think tags
+                        if "<think>" in delta and not in_think:
+                            in_think = True
+                            before, _, after = delta.partition("<think>")
+                            if before:
+                                safe = before.replace('"', '\\"').replace("\n", "\\n")
+                                yield f'event: content_delta\ndata: {{"text": "{safe}"}}\n\n'
+                            delta = after
+
+                        if in_think:
+                            if "</think>" in delta:
+                                think_part, _, after = delta.partition("</think>")
+                                if think_part:
+                                    safe = think_part.replace('"', '\\"').replace("\n", "\\n")
+                                    yield f'event: thinking_delta\ndata: {{"text": "{safe}"}}\n\n'
+                                secs = round(_time.monotonic() - t0, 1)
+                                yield f'event: thinking_stop\ndata: {{"seconds": {secs}}}\n\n'
+                                in_think = False
+                                delta = after
+                            else:
+                                safe = delta.replace('"', '\\"').replace("\n", "\\n")
+                                yield f'event: thinking_delta\ndata: {{"text": "{safe}"}}\n\n'
+                                continue
+
+                        if delta:
+                            safe = delta.replace('"', '\\"').replace("\n", "\\n")
+                            yield f'event: content_delta\ndata: {{"text": "{safe}"}}\n\n'
+                            full_reply_parts.append(delta)
+
+                    if in_think:
+                        secs = round(_time.monotonic() - t0, 1)
+                        yield f'event: thinking_stop\ndata: {{"seconds": {secs}}}\n\n'
+
+                except Exception as stream_err:
+                    yield f'event: error\ndata: {{"message": "{str(stream_err)[:200]}"}}\n\n'
+                    return
+
+                reply = "".join(full_reply_parts).strip()
+                session.add("assistant", reply)
+                yield f'event: done\ndata: {{"session_id": "{sid}"}}\n\n'
+
+        except Exception as e:
+            logger.error("POST /chat/stream failed: %s", e)
+            safe_msg = str(e)[:200].replace('"', '\\"')
+            yield f'event: error\ndata: {{"message": "{safe_msg}"}}\n\n'
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/chat/reset")

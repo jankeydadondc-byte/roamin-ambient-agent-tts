@@ -345,6 +345,31 @@ body {
   max-height: 400px;
 }
 
+/* Blinking block cursor during streaming */
+.thinking-cursor {
+  display: inline-block;
+  color: #c4a6e8;
+  animation: thinking-blink 1s step-end infinite;
+  margin-left: 1px;
+}
+
+@keyframes thinking-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Pulse animation for the sparkle icon while streaming */
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.25); }
+}
+
+/* Slightly brighter border when streaming */
+.thinking-block-v2.streaming {
+  border-left-color: #d9b8f5;
+  background: rgba(196, 166, 232, 0.1);
+}
+
 /* --- Message hover actions --- */
 
 .message-wrapper {

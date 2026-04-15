@@ -99,7 +99,11 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
     }
   };
 
-  const filteredModels = models.filter((m) => {
+  // Hide llama_cpp models whose file is missing
+  const visibleModels = models.filter(
+    (m) => !(m.provider === "llama_cpp" && m.status === "unavailable")
+  );
+  const filteredModels = visibleModels.filter((m) => {
     const name = (m.name || m.id || m).toLowerCase();
     return name.includes(modelSearch.toLowerCase());
   });
@@ -138,7 +142,7 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
               </button>
             </div>
           </div>
-          {models.length > 8 && (
+          {visibleModels.length > 8 && (
             <input
               className="model-search"
               type="text"

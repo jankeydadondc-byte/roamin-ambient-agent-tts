@@ -385,6 +385,30 @@ export async function setModelParams(params) {
   return res.json();
 }
 
+/** Get system hardware specs (CPU, RAM, GPU/VRAM). */
+export async function getSystemSpecs() {
+  try {
+    const res = await _fetch("/system/specs");
+    return res.json();
+  } catch (_) {
+    return { cpu_cores_physical: 1, cpu_cores_logical: 1, ram_total_gb: 0, ram_available_gb: 0, gpus: [] };
+  }
+}
+
+/** Estimate memory usage for loading a model with given params. */
+export async function estimateModel(modelId, params = {}) {
+  try {
+    const res = await _fetch("/models/estimate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model_id: modelId, params }),
+    });
+    return res.json();
+  } catch (_) {
+    return { guardrail_verdict: "ok" };
+  }
+}
+
 /** Scan configured model directories for GGUF files and merge into model list. */
 export async function scanModels() {
   try {
