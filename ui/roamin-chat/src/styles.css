@@ -281,50 +281,68 @@ body {
   width: 60%;
 }
 
-/* --- Thinking / reasoning collapsible block --- */
+/* --- Claude-style thinking / reasoning block --- */
 
-.thinking-block {
-  margin-bottom: 6px;
-  border-radius: 6px;
+.thinking-block-v2 {
+  border-left: 3px solid #c4a6e8;
+  border-radius: 8px;
+  background: rgba(196, 166, 232, 0.06);
+  margin-bottom: 10px;
   overflow: hidden;
-  border: 1px solid var(--border);
 }
 
-.thinking-block summary {
-  cursor: pointer;
-  padding: 5px 10px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  background: var(--bg-secondary);
-  user-select: none;
-  list-style: none;
+.thinking-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  color: #9e9eb0;
+  font-size: 0.82rem;
+  gap: 8px;
+  transition: background 0.15s;
 }
 
-.thinking-block summary::before {
-  content: "▶";
-  font-size: 9px;
-  transition: transform 0.15s;
+.thinking-header:hover {
+  background: rgba(196, 166, 232, 0.08);
 }
 
-.thinking-block[open] summary::before {
+.thinking-icon {
+  font-size: 1rem;
+  color: #c4a6e8;
+  flex-shrink: 0;
+}
+
+.thinking-label {
+  flex: 1;
+}
+
+.thinking-chevron {
+  font-size: 0.7rem;
+  transition: transform 200ms ease;
+  flex-shrink: 0;
+  color: #8e8ea0;
+}
+
+.thinking-chevron.open {
   transform: rotate(90deg);
 }
 
-.thinking-block summary::-webkit-details-marker { display: none; }
+.thinking-content-wrapper {
+  overflow: hidden;
+  transition: max-height 250ms ease;
+}
 
-.thinking-block .thinking-content {
-  padding: 8px 10px;
-  background: var(--bg-input);
-  font-size: 12px;
+.thinking-content-v2 {
+  padding: 0 12px 12px;
+  font-size: 0.82rem;
   font-family: "Cascadia Code", "Consolas", monospace;
-  color: rgba(230, 230, 230, 0.6);
+  color: rgba(230, 230, 230, 0.55);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 300px;
+  line-height: 1.5;
   overflow-y: auto;
+  max-height: 400px;
 }
 
 /* --- Message hover actions --- */

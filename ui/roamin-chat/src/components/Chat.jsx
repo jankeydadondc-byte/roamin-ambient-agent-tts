@@ -191,6 +191,7 @@ export default function Chat({
           role: "assistant",
           text: reply,
           reasoning: result.reasoning || null,
+          thinkSeconds: result.think_seconds || null,
           artifacts: newArtifacts,
         },
       ]);
@@ -314,7 +315,7 @@ export default function Chat({
             >
               {/* Reasoning block (above the message, collapsed) */}
               {msg.role === "assistant" && msg.reasoning && (
-                <ThinkingBlock reasoning={msg.reasoning} />
+                <ThinkingBlock reasoning={msg.reasoning} thinkSeconds={msg.thinkSeconds} />
               )}
 
               <div className={`message ${msg.role}`}>

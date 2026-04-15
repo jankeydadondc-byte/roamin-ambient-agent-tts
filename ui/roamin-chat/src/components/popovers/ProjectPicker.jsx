@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 
-// Tauri v2 invoke — dialog plugin uses the plugin: namespace
-const _tauriInvoke = window.__TAURI__?.core?.invoke ?? window.__TAURI__?.tauri?.invoke ?? null;
+// Lazy getter — Tauri v2 global isn't available until after WebView loads
+const getTauriInvoke = () =>
+  window.__TAURI__?.core?.invoke ?? window.__TAURI__?.tauri?.invoke ?? null;
 
 /**
  * Popover for setting the session's working-directory / project path.
@@ -21,11 +22,11 @@ export default function ProjectPicker({ value, onChange, onClose }) {
   };
 
   const handleBrowse = async () => {
-    if (!_tauriInvoke) return; // not in Tauri — fall back to manual input
+    const invoke = getTauriInvoke();
+    if (!invoke) return;
     setBrowsing(true);
     try {
-      // Tauri v2 dialog plugin: plugin:dialog|open with directory:true
-      const selected = await _tauriInvoke("plugin:dialog|open", {
+      const selected = await invoke("plugin:dialog|open", {
         directory: true,
         multiple: false,
         title: "Select Project Folder",
@@ -40,10 +41,10 @@ export default function ProjectPicker({ value, onChange, onClose }) {
     }
   };
 
-  const isTauri = Boolean(_tauriInvoke);
+  const isTauri = Boolean(getTauriInvoke());
 
   return (
-    <div className="popover" style={{ minWidth: 260 }}>
+    <div className="popover" style={{ minWidth: 260 }} onMouseDown={(e) => e.stopPropagation()}>
       <div className="popover-title">Session Target</div>
       <div style={{ padding: "6px 12px 4px", fontSize: 11, color: "var(--text-secondary)" }}>
         Working directory prepended to chat context

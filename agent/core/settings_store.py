@@ -37,6 +37,17 @@ _DEFAULTS: dict[str, Any] = {
     "default_model": "",
     "model_overrides": {},  # task -> model_id
     "tool_states": {},  # tool_name -> bool (True = enabled)
+    "model_params": {  # inference parameters applied to all models
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "top_k": 40,
+        "repeat_penalty": 1.1,
+        "max_tokens": 2048,
+        "context_length": 8192,
+    },
+    "model_scan_paths": [  # directories to scan for GGUF files
+        r"C:\AI\roamin-ambient-agent-tts\models",
+    ],
 }
 
 

@@ -29,7 +29,7 @@ export default function InputToolbar({
   const [selectingModel, setSelectingModel] = useState(null); // model id currently loading
   const [refreshing, setRefreshing] = useState(false);
 
-  // Close popover on outside click
+  // Close popover on outside click (capture phase to catch all clicks)
   const toolbarRef = useRef(null);
   useEffect(() => {
     if (!openPopover) return;
@@ -38,8 +38,15 @@ export default function InputToolbar({
         setOpenPopover(null);
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    const escHandler = (e) => {
+      if (e.key === "Escape") setOpenPopover(null);
+    };
+    document.addEventListener("mousedown", handler, true);
+    document.addEventListener("keydown", escHandler);
+    return () => {
+      document.removeEventListener("mousedown", handler, true);
+      document.removeEventListener("keydown", escHandler);
+    };
   }, [openPopover]);
 
   const toggle = (name) => setOpenPopover((cur) => (cur === name ? null : name));

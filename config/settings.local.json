@@ -1,0 +1,17 @@
+{
+  "volume": 0.5,
+  "screenshots_enabled": true,
+  "always_on_top": false,
+  "default_model": "ministral-3-14b-reasoning-2512-q4-k-m",
+  "model_overrides": {
+    "default": "ministral-3-14b-reasoning-2512-q4-k-m"
+  },
+  "tool_states": {
+    "delete_file": false,
+    "move_file": false,
+    "run_cmd": false,
+    "run_powershell": false,
+    "run_python": false,
+    "write_file": false
+  }
+}

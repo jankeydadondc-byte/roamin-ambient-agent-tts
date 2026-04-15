@@ -157,9 +157,14 @@ async def _startup_init(application: FastAPI) -> None:
             {
                 "id": m["id"],
                 "name": m.get("name", m["id"]),
-                "status": "loaded" if m.get("always_available") else "unloaded",
+                "status": (
+                    "available"
+                    if m.get("file_path") and Path(m["file_path"]).exists()
+                    else "available" if m.get("always_available") else "unavailable"
+                ),
                 "provider": m.get("provider", "unknown"),
                 "capabilities": m.get("capabilities", []),
+                "file_path": m.get("file_path", ""),
             }
             for m in router.list_models()
         ]
@@ -323,6 +328,13 @@ async def select_model(request: Request) -> dict[str, Any]:
     except Exception as lm_err:
         logger.debug("LM Studio load skipped (not reachable?): %s", lm_err)
 
+    # Update in-memory model status so GET /models reflects current state
+    for m in app.state.models:
+        if m.get("id") == model_id:
+            m["status"] = "loaded"
+        elif m.get("status") == "loaded":
+            m["status"] = "available"  # previous model demoted
+
     return {
         "status": "ok",
         "task": task,
@@ -381,6 +393,58 @@ async def refresh_models() -> dict[str, Any]:
     except Exception as e:
         logger.warning("POST /models/refresh failed: %s", e)
         return {"refreshed": False, "error": str(e), "models": app.state.models}
+
+
+@app.post("/models/scan")
+async def scan_models_endpoint() -> dict[str, Any]:
+    """Scan filesystem for GGUF model files and update the in-memory model list."""
+    try:
+        from agent.core import settings_store
+        from agent.core.model_scanner import scan_models
+
+        scan_paths: list[str] = settings_store.get("model_scan_paths", [])
+        # Also include LM Studio default path
+        lm_path = str(Path.home() / ".lmstudio" / "models")
+        if lm_path not in scan_paths:
+            scan_paths.append(lm_path)
+
+        scanned = scan_models(scan_paths)
+
+        # Merge with existing models — keep existing entries, add net-new
+        existing_paths: set[str] = {m.get("file_path", "") for m in app.state.models if m.get("file_path")}
+        for model in scanned:
+            if model["file_path"] not in existing_paths:
+                app.state.models.append(model)
+
+        logger.info("Model scan complete: %d scanned, %d total", len(scanned), len(app.state.models))
+        return {"scanned": len(scanned), "total": len(app.state.models), "models": app.state.models}
+    except Exception as e:
+        logger.error("POST /models/scan failed: %s", e)
+        return {"scanned": 0, "error": str(e), "models": app.state.models}
+
+
+@app.get("/models/params")
+async def get_model_params() -> dict[str, Any]:
+    """Return current model inference parameters from settings."""
+    from agent.core import settings_store
+
+    params = settings_store.get("model_params", {})
+    return {"params": params}
+
+
+@app.post("/models/params")
+async def set_model_params(request: Request) -> dict[str, Any]:
+    """Update model inference parameters. Persisted to settings.local.json."""
+    from agent.core import settings_store
+
+    body = await request.json()
+    allowed = {"temperature", "top_p", "top_k", "repeat_penalty", "max_tokens", "context_length"}
+    current = settings_store.get("model_params", {})
+    for k, v in body.items():
+        if k in allowed:
+            current[k] = v
+    settings_store.set_value("model_params", current)
+    return {"params": current, "status": "ok"}
 
 
 @app.get("/models/current")
@@ -748,12 +812,14 @@ async def chat_send(request: Request) -> dict[str, Any]:
         result: dict[str, Any] = raw if isinstance(raw, dict) else {"reply": raw, "reasoning": None}
         reply = result["reply"]
         reasoning = result.get("reasoning")
+        think_seconds = result.get("think_seconds")
 
         await _broadcast({"type": "chat_response", "data": {"message": reply}})
 
         return {
             "response": reply,
             "reasoning": reasoning,
+            "think_seconds": think_seconds,
             "session_id": session.session_id,
         }
     except Exception as e:

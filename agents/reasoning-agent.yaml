@@ -1,0 +1,6 @@
+name: reasoning agent
+description: agent that can reason
+system_prompt: ''
+model: ministral-3-14b-reasoning-2512-q4-k-m
+tools: []
+risk_level: low

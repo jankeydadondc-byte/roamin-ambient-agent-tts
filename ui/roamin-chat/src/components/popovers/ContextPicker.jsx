@@ -20,7 +20,7 @@ export default function ContextPicker({ value, onChange, onClose }) {
   };
 
   return (
-    <div className="popover" style={{ minWidth: 240 }}>
+    <div className="popover" style={{ minWidth: 240 }} onMouseDown={(e) => e.stopPropagation()}>
       <div className="popover-title">Add Context</div>
       <div style={{ padding: "6px 12px 4px", fontSize: 11, color: "var(--text-secondary)" }}>
         File or folder path to include with your next message

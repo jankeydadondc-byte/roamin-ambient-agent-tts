@@ -61,7 +61,7 @@ export default function AgentPicker({ value, onChange, onClose }) {
 
   if (showCreate) {
     return (
-      <div className="popover" style={{ minWidth: 260, maxHeight: 420, overflowY: "auto" }}>
+      <div className="popover" style={{ minWidth: 260, maxHeight: 420, overflowY: "auto" }} onMouseDown={(e) => e.stopPropagation()}>
         <div className="popover-title" style={{ display: "flex", justifyContent: "space-between" }}>
           <span>Create Agent</span>
           <button
@@ -132,7 +132,7 @@ export default function AgentPicker({ value, onChange, onClose }) {
   }
 
   return (
-    <div className="popover" style={{ minWidth: 220 }}>
+    <div className="popover" style={{ minWidth: 220 }} onMouseDown={(e) => e.stopPropagation()}>
       <div className="popover-title">Agent Mode</div>
       {loading && (
         <div style={{ padding: "8px 12px", fontSize: 12, color: "var(--text-secondary)" }}>Loading…</div>

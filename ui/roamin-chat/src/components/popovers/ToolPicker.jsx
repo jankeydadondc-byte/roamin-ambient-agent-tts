@@ -42,7 +42,7 @@ export default function ToolPicker({ onClose }) {
   };
 
   return (
-    <div className="popover" style={{ minWidth: 260 }}>
+    <div className="popover" style={{ minWidth: 260 }} onMouseDown={(e) => e.stopPropagation()}>
       <div className="popover-title">Available Tools</div>
       {loading && (
         <div style={{ padding: "8px 12px", fontSize: 12, color: "var(--text-secondary)" }}>

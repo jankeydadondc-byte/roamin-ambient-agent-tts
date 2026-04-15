@@ -489,6 +489,84 @@
       "context_window": 32768,
       "always_available": false,
       "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\gpt-oss-20b-GGUF\\gpt-oss-20b-MXFP4.gguf"
+    },
+    {
+      "id": "openai-20b-neo-code-dimat-mxfp4-moe4",
+      "name": "OpenAI-20B-NEO-CODE-DIMAT-MXFP4_MOE4",
+      "provider": "llama_cpp",
+      "model_id": "OpenAI-20B-NEO-CODE-DIMAT-MXFP4_MOE4",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\DavidAU\\Openai_gpt-oss-20b-CODER-NEO-CODE-DI-MATRIX-GGUF\\OpenAI-20B-NEO-CODE-DIMAT-MXFP4_MOE4.gguf"
+    },
+    {
+      "id": "my-model-q4-k-m",
+      "name": "my-model.Q4_K_M",
+      "provider": "llama_cpp",
+      "model_id": "my-model.Q4_K_M",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\AI\\roamin-ambient-agent-tts\\.pytest_tmp\\test_gguf_file_included_with_m0\\models\\my-model.Q4_K_M.gguf",
+      "mmproj_path": "C:\\AI\\roamin-ambient-agent-tts\\.pytest_tmp\\test_gguf_file_included_with_m0\\models\\my-model.mmproj-Q8_0.gguf"
+    },
+    {
+      "id": "net-q4",
+      "name": "net.Q4",
+      "provider": "llama_cpp",
+      "model_id": "net.Q4",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\AI\\roamin-ambient-agent-tts\\.pytest_tmp\\test_mmproj_file_not_included_0\\models\\net.Q4.gguf",
+      "mmproj_path": "C:\\AI\\roamin-ambient-agent-tts\\.pytest_tmp\\test_mmproj_file_not_included_0\\models\\net.mmproj.gguf"
+    },
+    {
+      "id": "qwen3-5-9b-claude-4-6-highiq-instruct-heretic-uncensored-q4-k-s",
+      "name": "Qwen3.5-9B-Claude-4.6-HighIQ-INSTRUCT-HERETIC-UNCENSORED.Q4_K_S",
+      "provider": "llama_cpp",
+      "model_id": "Qwen3.5-9B-Claude-4.6-HighIQ-INSTRUCT-HERETIC-UNCENSORED.Q4_K_S",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\mradermacher\\Qwen3.5-9B-Claude-4.6-HighIQ-INSTRUCT-HERETIC-UNCENSORED-GGUF\\Qwen3.5-9B-Claude-4.6-HighIQ-INSTRUCT-HERETIC-UNCENSORED.Q4_K_S.gguf",
+      "mmproj_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\mradermacher\\Qwen3.5-9B-Claude-4.6-HighIQ-INSTRUCT-HERETIC-UNCENSORED-GGUF\\Qwen3.5-9B-Claude-4.6-HighIQ-INSTRUCT-HERETIC-UNCENSORED.mmproj-f16.gguf"
+    },
+    {
+      "id": "qwen2-5-14b-uncensored-instruct-q4-k-l",
+      "name": "Qwen2.5-14B_Uncensored_Instruct-Q4_K_L",
+      "provider": "llama_cpp",
+      "model_id": "Qwen2.5-14B_Uncensored_Instruct-Q4_K_L",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\bartowski\\Qwen2.5-14B_Uncensored_Instruct-GGUF\\Qwen2.5-14B_Uncensored_Instruct-Q4_K_L.gguf"
     }
   ],
   "routing_rules": {

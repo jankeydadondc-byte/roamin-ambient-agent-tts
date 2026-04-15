@@ -29,7 +29,7 @@ const LEVELS = [
  */
 export default function PermissionToggle({ value, onChange, onClose }) {
   return (
-    <div className="popover" style={{ minWidth: 220 }}>
+    <div className="popover" style={{ minWidth: 220 }} onMouseDown={(e) => e.stopPropagation()}>
       <div className="popover-title">Permissions</div>
       <div className="permission-options">
         {LEVELS.map((l) => (

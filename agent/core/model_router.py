@@ -153,6 +153,16 @@ class ModelRouter:
 
         return headers
 
+    @staticmethod
+    def _load_user_params() -> dict:
+        """Load user-configured model params from settings, falling back to defaults."""
+        try:
+            from agent.core.settings_store import get as _sg
+
+            return _sg("model_params", {}) or {}
+        except Exception:
+            return {}
+
     def respond(
         self,
         task: str,
@@ -164,6 +174,9 @@ class ModelRouter:
         stream_think: bool = False,
     ) -> str:
         """Generate a response for the given task using LlamaCppBackend (primary) or HTTP fallback.
+
+        User-configured inference parameters (temperature, top_p, etc.) from
+        settings.local.json are applied on top of the caller-supplied defaults.
 
         Args:
             task: Task type to route (e.g., "code", "vision", "reasoning").
@@ -180,6 +193,13 @@ class ModelRouter:
         Raises:
             RuntimeError: If all inference backends fail.
         """
+        # Apply user-configured params on top of caller defaults
+        _uparams = self._load_user_params()
+        if "temperature" in _uparams:
+            temperature = float(_uparams["temperature"])
+        if "max_tokens" in _uparams:
+            max_tokens = int(_uparams["max_tokens"])
+
         # Try LlamaCppBackend first — but skip if a runtime override is active
         # (overrides route through the config-based file_path dispatch below)
         has_override = task in _TASK_OVERRIDES

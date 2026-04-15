@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import pathlib
 import re
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -470,6 +471,7 @@ def process_message(
     if stream_think and task_type not in ("reasoning", "code"):
         task_type = "reasoning"
 
+    _t0_think = time.monotonic()
     try:
         reply = router.respond(
             task_type,
@@ -509,6 +511,8 @@ def process_message(
     # ── 7. Update session ──
     session.add("assistant", reply)
 
+    _think_seconds = round(time.monotonic() - _t0_think, 1)
+
     if return_reasoning:
-        return {"reply": reply, "reasoning": _reasoning}
+        return {"reply": reply, "reasoning": _reasoning, "think_seconds": _think_seconds}
     return reply

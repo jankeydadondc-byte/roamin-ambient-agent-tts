@@ -68,12 +68,14 @@ export default function App() {
     loadModels();
     const conn = connectEvents(() => {});
 
-    // Restore always-on-top from localStorage on mount
-    const _invoke = window.__TAURI__?.core?.invoke ?? window.__TAURI__?.tauri?.invoke;
-    if (_invoke) {
-      const saved = localStorage.getItem("alwaysOnTop") === "true";
-      _invoke("set_always_on_top", { onTop: saved }).catch(() => {});
-    }
+    // Restore always-on-top from localStorage on mount (delay to ensure Tauri global is injected)
+    setTimeout(() => {
+      const _invoke = window.__TAURI__?.core?.invoke ?? window.__TAURI__?.tauri?.invoke;
+      if (_invoke) {
+        const saved = localStorage.getItem("alwaysOnTop") === "true";
+        _invoke("set_always_on_top", { onTop: saved }).catch(() => {});
+      }
+    }, 100);
 
     return () => { unsub(); conn.close(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

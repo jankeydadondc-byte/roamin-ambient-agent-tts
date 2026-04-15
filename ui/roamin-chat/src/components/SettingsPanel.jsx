@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
-// Use the Tauri v2 global rather than requiring @tauri-apps/api package
-const _tauriInvoke = window.__TAURI__?.core?.invoke ?? window.__TAURI__?.tauri?.invoke ?? null;
+// Lazy getter — Tauri v2 global isn't available until after WebView loads
+const getTauriInvoke = () =>
+  window.__TAURI__?.core?.invoke ?? window.__TAURI__?.tauri?.invoke ?? null;
 import {
   getSettings,
   setVolume,
   setScreenshots as apiSetScreenshots,
   refreshModels,
+  scanModels,
   updateSettings,
 } from "../apiClient";
 
@@ -27,6 +29,7 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
   );
   const [modelSearch, setModelSearch] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [selectingModel, setSelectingModel] = useState(null); // model id being loaded
 
   // Load current settings on open
@@ -57,8 +60,9 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
     // Persist to backend
     updateSettings({ always_on_top: checked }).catch(() => {});
     // Apply to Tauri window
-    if (_tauriInvoke) {
-      _tauriInvoke("set_always_on_top", { onTop: checked }).catch(() => {});
+    const invoke = getTauriInvoke();
+    if (invoke) {
+      invoke("set_always_on_top", { onTop: checked }).catch(() => {});
     }
   };
 
@@ -82,6 +86,19 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
     }
   };
 
+  const handleScanModels = async () => {
+    setScanning(true);
+    try {
+      const result = await scanModels();
+      if (result.models && onModelsRefresh) {
+        onModelsRefresh(result.models);
+      }
+    } catch (_) {}
+    finally {
+      setScanning(false);
+    }
+  };
+
   const filteredModels = models.filter((m) => {
     const name = (m.name || m.id || m).toLowerCase();
     return name.includes(modelSearch.toLowerCase());
@@ -100,15 +117,26 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
           {/* ── Model ── */}
           <div className="settings-section-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span>Model</span>
-            <button
-              className="toolbar-btn"
-              title={refreshing ? "Refreshing…" : "Refresh model list from LM Studio"}
-              onClick={handleRefreshModels}
-              disabled={refreshing}
-              style={{ fontSize: 13, padding: "2px 6px" }}
-            >
-              {refreshing ? "…" : "↺"}
-            </button>
+            <div style={{ display: "flex", gap: 4 }}>
+              <button
+                className="toolbar-btn"
+                title={scanning ? "Scanning…" : "Scan filesystem for GGUF models"}
+                onClick={handleScanModels}
+                disabled={scanning || refreshing}
+                style={{ fontSize: 11, padding: "2px 7px" }}
+              >
+                {scanning ? "…" : "⊕ Scan"}
+              </button>
+              <button
+                className="toolbar-btn"
+                title={refreshing ? "Refreshing…" : "Refresh model list"}
+                onClick={handleRefreshModels}
+                disabled={refreshing || scanning}
+                style={{ fontSize: 13, padding: "2px 6px" }}
+              >
+                {refreshing ? "…" : "↺"}
+              </button>
+            </div>
           </div>
           {models.length > 8 && (
             <input

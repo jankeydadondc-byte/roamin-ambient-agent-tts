@@ -365,6 +365,36 @@ export async function updateSettings(updates) {
   return res.json();
 }
 
+/** Get persisted inference parameters (temperature, top_p, etc.). */
+export async function getModelParams() {
+  try {
+    const res = await _fetch("/models/params");
+    return res.json();
+  } catch (_) {
+    return {};
+  }
+}
+
+/** Persist inference parameters to settings.local.json. */
+export async function setModelParams(params) {
+  const res = await _fetch("/models/params", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return res.json();
+}
+
+/** Scan configured model directories for GGUF files and merge into model list. */
+export async function scanModels() {
+  try {
+    const res = await _fetch("/models/scan", { method: "POST" });
+    return res.json();
+  } catch (_) {
+    return { models: [] };
+  }
+}
+
 // --- WebSocket events ---
 
 export function connectEvents(onEvent) {
