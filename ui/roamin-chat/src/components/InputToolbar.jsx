@@ -34,6 +34,11 @@ export default function InputToolbar({
 
   const toggle = (name) => setOpenPopover((cur) => (cur === name ? null : name));
 
+  // Filter out llama_cpp models whose file is missing (status === unavailable)
+  const visibleModels = (models || []).filter(
+    (m) => !(m.provider === "llama_cpp" && m.status === "unavailable")
+  );
+
   const modelLabel = selectingModel
     ? "Loading…"
     : selectedModel
@@ -63,11 +68,6 @@ export default function InputToolbar({
       setRefreshing(false);
     }
   };
-
-  // Filter out llama_cpp models whose file is missing (status === unavailable)
-  const visibleModels = models.filter(
-    (m) => !(m.provider === "llama_cpp" && m.status === "unavailable")
-  );
 
   return (
     <div className="input-toolbar">
