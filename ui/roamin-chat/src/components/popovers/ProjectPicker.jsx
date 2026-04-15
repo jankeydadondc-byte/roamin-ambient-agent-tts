@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 
-// Lazy getter — Tauri v2 global isn't available until after WebView loads
-const getTauriInvoke = () =>
-  window.__TAURI__?.core?.invoke ?? window.__TAURI__?.tauri?.invoke ?? null;
+// Use window.__TAURI__.dialog which is exposed when withGlobalTauri: true
+// and tauri-plugin-dialog is installed. Returns null in the browser.
+const getTauriDialog = () => window.__TAURI__?.dialog ?? null;
 
 /**
  * Popover for setting the session's working-directory / project path.
@@ -22,11 +22,11 @@ export default function ProjectPicker({ value, onChange, onClose }) {
   };
 
   const handleBrowse = async () => {
-    const invoke = getTauriInvoke();
-    if (!invoke) return;
+    const dialog = getTauriDialog();
+    if (!dialog) return;
     setBrowsing(true);
     try {
-      const selected = await invoke("plugin:dialog|open", {
+      const selected = await dialog.open({
         directory: true,
         multiple: false,
         title: "Select Project Folder",
@@ -41,10 +41,10 @@ export default function ProjectPicker({ value, onChange, onClose }) {
     }
   };
 
-  const isTauri = Boolean(getTauriInvoke());
+  const isTauri = Boolean(getTauriDialog());
 
   return (
-    <div className="popover" style={{ minWidth: 330, maxWidth: 420 }} onMouseDown={(e) => e.stopPropagation()}>
+    <div className="popover" style={{ minWidth: 240 }} onMouseDown={(e) => e.stopPropagation()}>
       <div className="popover-title">Session Target</div>
       <div style={{ padding: "6px 12px 4px", fontSize: 11, color: "var(--text-secondary)" }}>
         Working directory prepended to chat context
