@@ -8,6 +8,7 @@ export default function ToolPicker({ onClose }) {
   const [tools, setTools] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(null); // tool name being toggled
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     getTools()
@@ -18,21 +19,19 @@ export default function ToolPicker({ onClose }) {
 
   const handleToggle = async (toolName, currentEnabled) => {
     const newEnabled = !currentEnabled;
-
-    // Confirm enabling high-risk tools
-    const tool = tools.find((t) => t.name === toolName);
-    if (newEnabled && tool?.risk === "high") {
-      if (!window.confirm(`Enable "${toolName}"? This is a HIGH-risk tool.`)) return;
-    }
-
     setToggling(toolName);
+    setError(null);
+
     // Optimistic update
     setTools((prev) =>
       prev.map((t) => (t.name === toolName ? { ...t, enabled: newEnabled } : t))
     );
+
     try {
       await toggleTool(toolName, newEnabled);
-    } catch {
+    } catch (e) {
+      console.error("[ToolPicker] Toggle failed:", toolName, e);
+      setError(`Failed to toggle ${toolName}`);
       // Revert on error
       setTools((prev) =>
         prev.map((t) => (t.name === toolName ? { ...t, enabled: currentEnabled } : t))
@@ -50,6 +49,9 @@ export default function ToolPicker({ onClose }) {
           Loading…
         </div>
       )}
+      {error && (
+        <div style={{ padding: "4px 12px", fontSize: 11, color: "#e06c75" }}>{error}</div>
+      )}
       <div className="tool-list-scroll">
         {tools.map((t) => (
           <div key={t.name} className="tool-row" style={{ justifyContent: "space-between" }}>
@@ -62,7 +64,7 @@ export default function ToolPicker({ onClose }) {
             <label
               className="toggle-switch"
               style={{ flexShrink: 0, opacity: toggling === t.name ? 0.5 : 1 }}
-              title={t.enabled ? "Disable tool" : "Enable tool"}
+              title={t.enabled !== false ? "Disable tool" : "Enable tool"}
             >
               <input
                 type="checkbox"

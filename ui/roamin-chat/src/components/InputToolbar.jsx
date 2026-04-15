@@ -4,7 +4,7 @@ import ToolPicker from "./popovers/ToolPicker";
 import PermissionToggle from "./popovers/PermissionToggle";
 import ProjectPicker from "./popovers/ProjectPicker";
 import ContextPicker from "./popovers/ContextPicker";
-import { selectModel, refreshModels } from "../apiClient";
+import { refreshModels } from "../apiClient";
 
 /**
  * Bottom toolbar row beneath the textarea.
@@ -52,16 +52,13 @@ export default function InputToolbar({
 
   const permIcons = { default: "🔒", bypass: "🔓", autopilot: "⚡" };
 
-  const handleModelSelect = async (id) => {
+  const handleModelSelect = (id) => {
     setSelectingModel(id || "auto");
     setOpenPopover(null);
-    try {
-      onModelChange(id);
-      await selectModel(id);
-    } catch (_) {}
-    finally {
-      setSelectingModel(null);
-    }
+    // onModelChange (from App.jsx) handles both state + API call + localStorage persistence
+    onModelChange(id);
+    // Brief visual loading state then clear
+    setTimeout(() => setSelectingModel(null), 800);
   };
 
   const handleRefreshModels = async () => {

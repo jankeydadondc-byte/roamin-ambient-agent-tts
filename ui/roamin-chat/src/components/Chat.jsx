@@ -483,7 +483,11 @@ export default function Chat({
       )}
 
       {showModelSidebar && !showArtifacts && (
-        <ModelSidebar onClose={() => setShowModelSidebar(false)} />
+        <ModelSidebar
+          onClose={() => setShowModelSidebar(false)}
+          selectedModel={selectedModel}
+          models={models}
+        />
       )}
     </>
   );

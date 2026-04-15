@@ -337,6 +337,34 @@ export async function toggleTool(toolName, enabled) {
   return res.json();
 }
 
+/** Delete a session and all its messages from the database. */
+export async function deleteSession(sessionId) {
+  const res = await _fetch(`/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+  });
+  return res.json();
+}
+
+/** Get the current system prompt(s) from disk. */
+export async function getSystemPrompt() {
+  try {
+    const res = await _fetch("/system-prompt");
+    return res.json();
+  } catch (_) {
+    return { prompts: {} };
+  }
+}
+
+/** Update bulk settings. */
+export async function updateSettings(updates) {
+  const res = await _fetch("/settings/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  return res.json();
+}
+
 // --- WebSocket events ---
 
 export function connectEvents(onEvent) {

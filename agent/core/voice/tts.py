@@ -351,17 +351,42 @@ class TextToSpeech:
             self._speak_sapi_subprocess(text)
             return
         try:
+            # Apply persisted volume setting before each utterance
+            try:
+                from agent.core.settings_store import get as _settings_get
+
+                vol = float(_settings_get("volume", 1.0))
+                self._pyttsx3_engine.setProperty("volume", max(0.0, min(1.0, vol)))
+            except Exception:
+                pass
             self._pyttsx3_engine.say(text)
             self._pyttsx3_engine.runAndWait()
         except Exception as e:
             print(f"[TTS] pyttsx3 error: {e}")
             self._speak_sapi_subprocess(text)
 
+    @staticmethod
+    def _apply_volume() -> None:
+        """Set the waveform audio volume from persisted settings before playback."""
+        try:
+            import ctypes
+
+            from agent.core.settings_store import get as _settings_get
+
+            vol_f = float(_settings_get("volume", 1.0))
+            vol_f = max(0.0, min(1.0, vol_f))
+            vol = int(vol_f * 0xFFFF)
+            # waveOutSetVolume(device_id=0, volume=L|R) — affects winsound.PlaySound
+            ctypes.windll.winmm.waveOutSetVolume(0, vol | (vol << 16))
+        except Exception:
+            pass  # non-fatal — play at whatever volume is set
+
     def _play_wav(self, path: Path) -> None:
-        """Play a WAV file using winsound."""
+        """Play a WAV file using winsound with volume from settings."""
         try:
             import winsound
 
+            self._apply_volume()
             winsound.PlaySound(str(path), winsound.SND_FILENAME)
         except Exception as e:
             print(f"[TTS] playback error: {e}")

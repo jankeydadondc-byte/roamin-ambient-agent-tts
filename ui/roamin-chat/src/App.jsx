@@ -50,13 +50,12 @@ export default function App() {
     getModels()
       .then((data) => {
         setModels(data.models || []);
-        if (!selectedModel && data.models?.length > 0) {
-          setSelectedModel(data.models[0].id || "");
-        }
+        // Don't auto-select first model — "Auto" (empty) is the default
+        // The user's last manual selection is restored from localStorage above
       })
       .catch(() => setModels([]))
       .finally(() => setModelsLoading(false));
-  }, [selectedModel]);
+  }, []);
 
   useEffect(() => {
     const unsub = onConnectionChange((state) => {
@@ -68,6 +67,14 @@ export default function App() {
     });
     loadModels();
     const conn = connectEvents(() => {});
+
+    // Restore always-on-top from localStorage on mount
+    const _invoke = window.__TAURI__?.core?.invoke ?? window.__TAURI__?.tauri?.invoke;
+    if (_invoke) {
+      const saved = localStorage.getItem("alwaysOnTop") === "true";
+      _invoke("set_always_on_top", { onTop: saved }).catch(() => {});
+    }
+
     return () => { unsub(); conn.close(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

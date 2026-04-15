@@ -3,11 +3,10 @@ import React, { useState, useEffect } from "react";
 const _tauriInvoke = window.__TAURI__?.core?.invoke ?? window.__TAURI__?.tauri?.invoke ?? null;
 import {
   getSettings,
-  getModels,
-  selectModel,
   setVolume,
   setScreenshots as apiSetScreenshots,
   refreshModels,
+  updateSettings,
 } from "../apiClient";
 
 /**
@@ -55,20 +54,19 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
   const handleAlwaysOnTop = (checked) => {
     setAlwaysOnTop(checked);
     localStorage.setItem("alwaysOnTop", String(checked));
+    // Persist to backend
+    updateSettings({ always_on_top: checked }).catch(() => {});
+    // Apply to Tauri window
     if (_tauriInvoke) {
       _tauriInvoke("set_always_on_top", { onTop: checked }).catch(() => {});
     }
   };
 
-  const handleModelSelect = async (id) => {
+  const handleModelSelect = (id) => {
     setSelectingModel(id);
-    try {
-      onModelChange(id);
-      await selectModel(id);
-    } catch (_) {}
-    finally {
-      setSelectingModel(null);
-    }
+    // onModelChange (from App.jsx) handles API call + localStorage persistence
+    onModelChange(id);
+    setTimeout(() => setSelectingModel(null), 800);
   };
 
   const handleRefreshModels = async () => {

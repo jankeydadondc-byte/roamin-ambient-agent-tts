@@ -842,6 +842,50 @@ async def list_sessions() -> dict[str, Any]:
         return {"sessions": [], "current_session_id": None}
 
 
+@app.delete("/sessions/{session_id}")
+async def delete_session(session_id: str) -> dict[str, Any]:
+    """Delete all messages for a session from the conversation history database."""
+    try:
+        import sqlite3
+
+        db_path = paths.get_project_root() / "agent" / "core" / "memory" / "roamin_memory.db"
+        if not db_path.exists():
+            raise HTTPException(status_code=404, detail="Database not found")
+
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM conversation_history WHERE session_id = ?", (session_id,))
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        if deleted == 0:
+            return {"deleted": 0, "status": "not_found"}
+
+        logger.info("Deleted session %s (%d messages)", session_id, deleted)
+        return {"deleted": deleted, "session_id": session_id, "status": "ok"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("DELETE /sessions/%s failed: %s", session_id, e)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/system-prompt")
+async def get_system_prompt() -> dict[str, Any]:
+    """Return the current system prompt text from disk."""
+    prompts: dict[str, str] = {}
+    # Primary system prompt (personality)
+    primary = paths.get_project_root() / "roamin ambient agent system prompt.txt"
+    if primary.exists():
+        prompts["primary"] = primary.read_text(encoding="utf-8")
+    # Sidecar prompt (persona/context)
+    sidecar = paths.get_project_root() / "agent" / "core" / "system_prompt.txt"
+    if sidecar.exists():
+        prompts["sidecar"] = sidecar.read_text(encoding="utf-8")
+    return {"prompts": prompts}
+
+
 @app.get("/tools")
 async def get_tools() -> dict[str, Any]:
     """List all registered agent tools with name, description, risk, and enabled state."""
