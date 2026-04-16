@@ -1121,15 +1121,32 @@ async def chat_stream(request: Request) -> StreamingResponse:
                         except Exception:
                             continue
 
-                        delta = (
-                            data.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                            or data.get("message", {}).get("content", "")
-                            or ""
-                        )
+                        choice_delta = data.get("choices", [{}])[0].get("delta", {})
+                        # LM Studio sends reasoning in a dedicated field (no <think> tags)
+                        reasoning_text = choice_delta.get("reasoning_content") or ""
+                        delta = choice_delta.get("content") or data.get("message", {}).get("content") or ""
+
+                        # --- LM Studio-style: reasoning_content field ---
+                        if reasoning_text:
+                            if not think_started:
+                                think_started = True
+                                in_think = True
+                                t0 = _time.monotonic()
+                                yield f'event: thinking_start\ndata: {{"session_id": "{sid}"}}\n\n'
+                            safe = reasoning_text.replace('"', '\\"').replace("\n", "\\n")
+                            yield f'event: thinking_delta\ndata: {{"text": "{safe}"}}\n\n'
+                            continue
+
+                        # Transition: reasoning_content → content (close thinking block)
+                        if think_started and in_think and delta:
+                            secs = round(_time.monotonic() - t0, 1)
+                            yield f'event: thinking_stop\ndata: {{"seconds": {secs}}}\n\n'
+                            in_think = False
+
                         if not delta:
                             continue
 
-                        # Check for think tags
+                        # --- Ollama-style: <think> tags embedded in content ---
                         if "<think>" in delta and not in_think:
                             in_think = True
                             if not think_started:
