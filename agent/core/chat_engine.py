@@ -310,10 +310,17 @@ def _try_direct_dispatch(message: str, registry) -> str:
         if trigger in lower:
             try:
                 result = registry.execute("web_search", {"query": message})
+                logger.debug(f"[_try_direct_dispatch] web_search result: {result}")
                 if result and (result.get("ok") or result.get("success")) and result.get("result"):
                     return f"[web_search]: {str(result['result'])[:1500]}"
-            except Exception:
-                pass
+                else:
+                    logger.debug(
+                        f"[_try_direct_dispatch] web_search failed checks: "
+                        f"ok={result.get('ok')}, success={result.get('success')}, "
+                        f"result={bool(result.get('result'))}"
+                    )
+            except Exception as e:
+                logger.warning(f"[_try_direct_dispatch] web_search exception: {e}")
             break  # Only try once
 
     return ""

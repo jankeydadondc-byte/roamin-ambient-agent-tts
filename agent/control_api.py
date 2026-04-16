@@ -954,6 +954,7 @@ async def chat_stream(request: Request) -> StreamingResponse:
         try:
             from agent.core import settings_store
             from agent.core.model_router import ModelRouter
+            from agent.core.tool_registry import ToolRegistry
             from agent.core.voice.session import get_session
 
             session = get_session()
@@ -963,16 +964,35 @@ async def chat_stream(request: Request) -> StreamingResponse:
             max_tokens = int(params.get("max_tokens", 2048))
 
             # Build system prompt (same as process_message but streaming)
-            from agent.core.chat_engine import build_memory_context, build_sidecar_context, extract_and_store_fact
+            from agent.core.chat_engine import (
+                _try_direct_dispatch,
+                build_memory_context,
+                build_sidecar_context,
+                extract_and_store_fact,
+            )
             from agent.core.memory import MemoryManager
 
             memory = MemoryManager()
             extract_and_store_fact(message, memory)
             memory_ctx = build_memory_context(message, memory)
+
+            # ── Option 2: Basic single-tool dispatch (before streaming) ──
+            # Check if the user message triggers a tool execution
+            registry = ToolRegistry()
+            tool_context = _try_direct_dispatch(message, registry)
+
             system_content = "Reply concisely in plain text. No markdown formatting.\n\n" + build_sidecar_context(
                 memory_context=memory_ctx,
                 session_context=session.get_context_block(),
             )
+
+            # Append tool results to system context if any were executed
+            if tool_context:
+                logger.info(f"[chat/stream] Tool dispatch succeeded: {tool_context[:100]}...")
+                system_content += f"\n\n[Tool Results]\n{tool_context}"
+            else:
+                logger.info(f"[chat/stream] No tool triggered for message: {message[:50]}")
+
             messages = [
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": message},
