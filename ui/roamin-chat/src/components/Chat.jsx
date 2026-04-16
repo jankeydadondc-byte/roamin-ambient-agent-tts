@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { sendMessage, getChatHistory, resetChat, getPendingNotifications, getConnectionState } from "../apiClient";
 import ThinkingBlock from "./ThinkingBlock";
+import ToolStatus from "./ToolStatus";
 import TokenBar from "./TokenBar";
 import InputToolbar from "./InputToolbar";
 import ArtifactsPanel from "./ArtifactsPanel";
@@ -83,6 +84,9 @@ export default function Chat({
   const [projectPath, setProjectPath]     = useState(() => LS.get("roamin_project_path", ""));
   const [contextAttachment, setContextAttachment] = useState("");
 
+  // Per-message agentic loop toggle (Option 1). null = defer to global setting.
+  const [agenticEnabled, setAgenticEnabled] = useState(() => LS.get("roamin_agentic_enabled", null));
+
   // AbortController for stop-generation
   const abortControllerRef = useRef(null);
   const chatEndRef          = useRef(null);
@@ -95,6 +99,7 @@ export default function Chat({
   useEffect(() => { LS.set("roamin_agent_mode", agentMode); }, [agentMode]);
   useEffect(() => { LS.set("roamin_permission", permission); }, [permission]);
   useEffect(() => { LS.set("roamin_project_path", projectPath); }, [projectPath]);
+  useEffect(() => { LS.set("roamin_agentic_enabled", agenticEnabled); }, [agenticEnabled]);
 
   // Load history on mount or session change
   useEffect(() => {
@@ -159,6 +164,7 @@ export default function Chat({
     if (contextAttachment) extra.context_attachment = contextAttachment;
     if (agentMode !== "auto") extra.task = agentMode;
     if (permission !== "default") extra.permission_level = permission;
+    if (agenticEnabled !== null) extra.agentic = agenticEnabled;
 
     setMessages((prev) => [...prev, { role: "user", text }]);
     setInput("");
@@ -223,8 +229,16 @@ export default function Chat({
       const decoder = new TextDecoder();
       let buf = "";
 
-      // Add placeholder message immediately
-      _addAssistant({ text: "", reasoning: null, thinkSeconds: null, _streaming: true });
+      // Add placeholder message immediately — includes agentic tracking fields
+      _addAssistant({
+        text: "", reasoning: null, thinkSeconds: null, _streaming: true,
+        _planning: false, _planSteps: null, _planSeconds: null,
+        _toolSteps: [], _reflecting: false, _reflectCycles: [],
+      });
+
+      // Mutable ref for tool steps (we mutate in place to avoid stale closures)
+      const toolStepsRef = { current: [] };
+      const reflectCyclesRef = { current: [] };
 
       while (true) {
         const { done, value } = await reader.read();
@@ -232,8 +246,6 @@ export default function Chat({
         buf += decoder.decode(value, { stream: true });
 
         // Split on SSE event boundary (\n\n) — each entry is one complete event.
-        // This ensures event: and data: lines that span different TCP chunks are
-        // always processed together, never with a stale or reset evtType.
         const events = buf.split("\n\n");
         buf = events.pop(); // last fragment is incomplete — keep buffered
 
@@ -264,10 +276,44 @@ export default function Chat({
           } else if (evtType === "done") {
             const finalArtifacts = extractArtifacts(replyText);
             if (finalArtifacts.length > 0) setArtifacts((p) => [...p, ...finalArtifacts]);
-            // Always clear _thinkStreaming on done — safety net if thinking_stop was missed
-            _updateAssistant({ text: replyText || "Done.", _streaming: false, _thinkStreaming: false, artifacts: finalArtifacts });
+            _updateAssistant({
+              text: replyText || "Done.", _streaming: false, _thinkStreaming: false,
+              _planning: false, _reflecting: false,
+              _toolSteps: toolStepsRef.current.map((s) => ({ ...s, status: s.status === "running" ? "ok" : s.status })),
+              artifacts: finalArtifacts,
+            });
           } else if (evtType === "error") {
             _updateAssistant({ text: `Error: ${payload.message || "unknown"}`, _streaming: false, _thinkStreaming: false });
+
+          // ── Option 1 agentic events ──
+          } else if (evtType === "planning_start") {
+            _updateAssistant({ _planning: true, _planSteps: null, _planSeconds: null });
+          } else if (evtType === "planning_stop") {
+            _updateAssistant({ _planning: false, _planSteps: payload.steps ?? null, _planSeconds: payload.seconds ?? null });
+          } else if (evtType === "tool_start") {
+            const step = { tool: payload.tool, step: payload.step, action: payload.action || payload.tool, status: "running", seconds: null, error: null };
+            toolStepsRef.current = [...toolStepsRef.current, step];
+            _updateAssistant({ _toolSteps: [...toolStepsRef.current] });
+          } else if (evtType === "tool_stop") {
+            toolStepsRef.current = toolStepsRef.current.map((s) =>
+              s.step === payload.step && s.tool === payload.tool
+                ? { ...s, status: "ok", seconds: payload.seconds ?? null }
+                : s
+            );
+            _updateAssistant({ _toolSteps: [...toolStepsRef.current] });
+          } else if (evtType === "tool_error") {
+            toolStepsRef.current = toolStepsRef.current.map((s) =>
+              s.step === payload.step && s.tool === payload.tool
+                ? { ...s, status: "error", error: payload.error || "failed" }
+                : s
+            );
+            _updateAssistant({ _toolSteps: [...toolStepsRef.current] });
+          } else if (evtType === "reflect_start") {
+            _updateAssistant({ _reflecting: true });
+          } else if (evtType === "reflect_stop") {
+            const rc = { cycle: payload.cycle, verdict: payload.verdict, tool: payload.tool || null, seconds: payload.seconds ?? null };
+            reflectCyclesRef.current = [...reflectCyclesRef.current, rc];
+            _updateAssistant({ _reflecting: false, _reflectCycles: [...reflectCyclesRef.current] });
           }
         }
       }
@@ -417,6 +463,18 @@ export default function Chat({
               onMouseEnter={() => setHoveredMsgIdx(i)}
               onMouseLeave={() => setHoveredMsgIdx(null)}
             >
+              {/* Option 1 agentic status — plan/tool/reflect events */}
+              {msg.role === "assistant" && (msg._planning || msg._toolSteps?.length > 0 || msg._reflecting || msg._reflectCycles?.length > 0) && (
+                <ToolStatus
+                  planning={!!msg._planning}
+                  planSeconds={msg._planSeconds ?? null}
+                  planSteps={msg._planSteps ?? null}
+                  toolSteps={msg._toolSteps || []}
+                  reflecting={!!msg._reflecting}
+                  reflectCycles={msg._reflectCycles || []}
+                />
+              )}
+
               {/* Reasoning block — only render once thinking_start has fired (reasoning !== null) */}
               {msg.role === "assistant" && msg.reasoning !== null && (
                 <ThinkingBlock
@@ -572,6 +630,8 @@ export default function Chat({
           contextAttachment={contextAttachment}
           onContextAttachmentChange={setContextAttachment}
           onOpenModelSidebar={() => setShowModelSidebar(true)}
+          agenticEnabled={agenticEnabled}
+          onAgenticChange={setAgenticEnabled}
         />
       </div>
 

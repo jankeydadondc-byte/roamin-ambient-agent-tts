@@ -32,6 +32,11 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
   const [scanning, setScanning] = useState(false);
   const [selectingModel, setSelectingModel] = useState(null); // model id being loaded
 
+  // Option 1 agentic settings
+  const [agenticMode, setAgenticModeState] = useState(false);
+  const [planningModel, setPlanningModelState] = useState("");
+  const [planningModelSearch, setPlanningModelSearch] = useState("");
+
   // Load current settings on open
   useEffect(() => {
     getSettings().then((s) => {
@@ -41,6 +46,8 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
         setAlwaysOnTop(s.always_on_top);
         localStorage.setItem("alwaysOnTop", String(s.always_on_top));
       }
+      if (s.agentic_mode !== undefined) setAgenticModeState(s.agentic_mode);
+      if (s.planning_model !== undefined) setPlanningModelState(s.planning_model || "");
     }).catch(() => {});
   }, []);
 
@@ -64,6 +71,16 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
     if (invoke) {
       invoke("set_always_on_top", { onTop: checked }).catch(() => {});
     }
+  };
+
+  const handleAgenticMode = (checked) => {
+    setAgenticModeState(checked);
+    updateSettings({ agentic_mode: checked }).catch(() => {});
+  };
+
+  const handlePlanningModelSelect = (id) => {
+    setPlanningModelState(id);
+    updateSettings({ planning_model: id }).catch(() => {});
   };
 
   const handleModelSelect = (id) => {
@@ -230,6 +247,72 @@ export default function SettingsPanel({ onClose, selectedModel, onModelChange, m
               <span className="slider" />
             </label>
           </div>
+
+          <div className="settings-divider" />
+
+          {/* ── Agentic Loop (Option 1) ── */}
+          <div className="settings-section-title">Agentic Loop</div>
+          <div className="theme-toggle-row" style={{ marginBottom: 4 }}>
+            <span>Enable Agentic Mode</span>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={agenticMode}
+                onChange={(e) => handleAgenticMode(e.target.checked)}
+              />
+              <span className="slider" />
+            </label>
+          </div>
+          <p style={{ fontSize: 10, color: "var(--text-secondary)", padding: "0 14px 8px", margin: 0 }}>
+            When on, Roamin plans tool use before answering. Use ⚡ in the input toolbar to override per message.
+          </p>
+
+          <div className="settings-section-title" style={{ fontSize: 11 }}>Planning Model</div>
+          <p style={{ fontSize: 10, color: "var(--text-secondary)", padding: "0 14px 4px", margin: 0 }}>
+            Model used for planning &amp; reflection. Recommended: same as chat model to avoid VRAM swap.
+          </p>
+          {visibleModels.length > 6 && (
+            <input
+              className="model-search"
+              type="text"
+              placeholder="Filter models…"
+              value={planningModelSearch}
+              onChange={(e) => setPlanningModelSearch(e.target.value)}
+              style={{ margin: "2px 10px 4px" }}
+            />
+          )}
+          <div
+            className={`model-option ${!planningModel ? "selected" : ""}`}
+            onClick={() => handlePlanningModelSelect("")}
+            style={{ fontSize: 12 }}
+          >
+            <span className="model-checkmark">{!planningModel ? "✓" : ""}</span>
+            Auto (best available)
+          </div>
+          {visibleModels
+            .filter((m) => {
+              if (!planningModelSearch) return true;
+              const name = (m.name || m.id || m).toLowerCase();
+              return name.includes(planningModelSearch.toLowerCase());
+            })
+            .map((m) => {
+              const id = m.id || m;
+              const name = m.name || m.id || m;
+              return (
+                <div
+                  key={id}
+                  className={`model-option ${planningModel === id ? "selected" : ""}`}
+                  onClick={() => handlePlanningModelSelect(id)}
+                  title={name}
+                  style={{ fontSize: 12 }}
+                >
+                  <span className="model-checkmark">{planningModel === id ? "✓" : ""}</span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {name}
+                  </span>
+                </div>
+              );
+            })}
         </div>
       </div>
     </>

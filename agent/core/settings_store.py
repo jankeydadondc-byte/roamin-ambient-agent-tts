@@ -64,6 +64,8 @@ _DEFAULTS: dict[str, Any] = {
     "model_scan_paths": [  # directories to scan for GGUF files
         r"C:\AI\roamin-ambient-agent-tts\models",
     ],
+    "planning_model": "",  # model_id for planning; "" = auto (best_task_for("planning"))
+    "agentic_mode": False,  # global on/off for Option 1 agentic loop
 }
 
 

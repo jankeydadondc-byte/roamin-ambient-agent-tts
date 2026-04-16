@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re as _re
 import socket
 import tempfile
 import time
@@ -927,6 +928,194 @@ async def chat_send(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ---------------------------------------------------------------------------
+# Agentic streaming helpers
+# ---------------------------------------------------------------------------
+
+_INJECTION_RE = _re.compile(
+    r"ignore\s+(all\s+)?(previous|prior|above)\s+instructions?|"
+    r"system\s+prompt|you\s+are\s+now|new\s+persona|disregard|override",
+    _re.IGNORECASE,
+)
+
+
+def _sse(event_type: str, data: dict) -> str:
+    """Format a single Server-Sent Event string."""
+    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+
+def _sanitize_tool_result(text: str) -> str:
+    """Strip obvious prompt-injection phrases from tool output."""
+    return _INJECTION_RE.sub("[FILTERED]", text)
+
+
+async def _stream_generate_plan(
+    message: str,
+    registry,
+    router,
+    session,
+) -> list[dict] | None:
+    """Call the planning model and return a parsed JSON step list.
+
+    Returns None on failure or if the model returns an empty plan.
+    Never calls session.add() — planning is internal.
+    """
+    from agent.core import settings_store as _ss
+
+    tool_states = _ss.get("tool_states", {})
+    tool_lines: list[str] = []
+    for name in registry.list_tools():
+        if not tool_states.get(name, True):
+            continue
+        tool = registry.get(name)
+        if tool:
+            tool_lines.append(f"- {name}: {tool['description']} | params: {tool.get('params', {})}")
+
+    ctx_block = session.get_context_block()
+    ctx_section = f"\n\n{ctx_block}" if ctx_block else ""
+
+    system_prompt = (
+        "You are a task planning assistant. Output ONLY a JSON array of steps.\n"
+        'Each step: {"step": int, "action": str, "tool": str|null, '
+        '"params": dict, "risk": "low"|"medium"|"high"}.\n'
+        "RULES:\n"
+        "- Use tools from Available Tools when they help answer the request.\n"
+        "- Use tool=null only for pure reasoning that needs no external data.\n"
+        "- Use only the exact tool names listed — do not invent names.\n"
+        "- If the request is purely conversational, return: []\n"
+        "- Keep steps minimal (1-5). Avoid redundant steps.\n"
+        f"{ctx_section}\n\n"
+        "Available Tools:\n" + "\n".join(tool_lines)
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": message},
+    ]
+
+    # Resolve planning model: explicit setting → capability routing
+    planning_model_id = _ss.get("planning_model", "")
+    if planning_model_id:
+        planning_task = next(
+            (t for t, mid in (router._routing_rules or {}).items() if mid == planning_model_id),
+            "default",
+        )
+    else:
+        planning_task = router.best_task_for("planning")
+
+    try:
+        reply = await asyncio.to_thread(
+            router.respond,
+            planning_task,
+            message,
+            messages,
+            1000,  # max_tokens
+            0.2,  # temperature
+        )
+    except Exception as exc:
+        logger.warning("[_stream_generate_plan] Planning model failed: %s", exc)
+        return None
+
+    if not reply:
+        return None
+
+    # Strip markdown code fences if model wrapped response
+    text = reply.strip()
+    if text.startswith("```"):
+        parts = text.split("```", 2)
+        text = parts[1].lstrip("json").strip() if len(parts) > 1 else text
+        text = text.rstrip("`").strip()
+
+    start = text.find("[")
+    end = text.rfind("]")
+    if start == -1 or end == -1:
+        return None
+    try:
+        plan = json.loads(text[start : end + 1])
+        return plan if isinstance(plan, list) else None
+    except (ValueError, TypeError):
+        return None
+
+
+async def _stream_reflect(
+    message: str,
+    tool_context: str,
+    router,
+    planning_task: str,
+    registry,
+    cycle: int = 1,
+) -> dict:
+    """Ask planning model if tool results are sufficient.
+
+    Returns {"verdict": "ready"} or
+            {"verdict": "need_more", "tool": "<name>", "params": {...}}.
+    Never calls session.add().
+    """
+    from agent.core import settings_store as _ss
+
+    tool_states = _ss.get("tool_states", {})
+    tool_lines: list[str] = []
+    for name in registry.list_tools():
+        if not tool_states.get(name, True):
+            continue
+        tool = registry.get(name)
+        if tool:
+            tool_lines.append(f"- {name}: {tool['description']}")
+
+    system_prompt = (
+        "You are evaluating whether collected tool results are sufficient "
+        "to answer the user's question.\n"
+        'Output ONLY valid JSON: {"verdict": "ready"} if you can answer fully, '
+        'or {"verdict": "need_more", "tool": "<tool_name>", "params": {}} '
+        "if exactly one more tool would significantly improve the answer.\n"
+        "Only request a tool if it would add genuinely new information.\n"
+        "Use only tools from the Available Tools list.\n\n"
+        "Available Tools:\n" + "\n".join(tool_lines)
+    )
+    user_content = (
+        f"Original question: {message}\n\n"
+        f"Tool results collected so far:\n{tool_context}\n\n"
+        "Do you have enough information to answer?"
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+    try:
+        reply = await asyncio.to_thread(
+            router.respond,
+            planning_task,
+            user_content,
+            messages,
+            200,  # max_tokens — keep reflect calls short
+            0.1,  # temperature
+        )
+    except Exception as exc:
+        logger.warning("[_stream_reflect] Reflect model failed: %s", exc)
+        return {"verdict": "ready"}
+
+    if not reply:
+        return {"verdict": "ready"}
+
+    text = reply.strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1:
+        return {"verdict": "ready"}
+    try:
+        result = json.loads(text[start : end + 1])
+        if result.get("verdict") not in ("ready", "need_more"):
+            return {"verdict": "ready"}
+        if result.get("verdict") == "need_more":
+            tool_name = result.get("tool", "")
+            if not tool_name or not registry.get(tool_name):
+                return {"verdict": "ready"}
+        return result
+    except (ValueError, TypeError):
+        return {"verdict": "ready"}
+
+
 @app.post("/chat/stream")
 async def chat_stream(request: Request) -> StreamingResponse:
     """SSE streaming chat endpoint.
@@ -953,55 +1142,207 @@ async def chat_stream(request: Request) -> StreamingResponse:
 
         try:
             from agent.core import settings_store
-            from agent.core.model_router import ModelRouter
-            from agent.core.tool_registry import ToolRegistry
-            from agent.core.voice.session import get_session
-
-            session = get_session()
-            session.add("user", message)
-
-            params = settings_store.get("model_params", {})
-            max_tokens = int(params.get("max_tokens", 2048))
-
-            # Build system prompt (same as process_message but streaming)
             from agent.core.chat_engine import (
+                _is_conversational,
                 _try_direct_dispatch,
                 build_memory_context,
                 build_sidecar_context,
                 extract_and_store_fact,
             )
             from agent.core.memory import MemoryManager
+            from agent.core.model_router import ModelRouter
+            from agent.core.tool_registry import ToolRegistry
+            from agent.core.voice.session import get_session
+
+            session = get_session()
+            session.add("user", message)  # Only user message stored here
+
+            params = settings_store.get("model_params", {})
+            max_tokens = int(params.get("max_tokens", 2048))
 
             memory = MemoryManager()
             extract_and_store_fact(message, memory)
             memory_ctx = build_memory_context(message, memory)
 
-            # ── Option 2: Basic single-tool dispatch (before streaming) ──
-            # Check if the user message triggers a tool execution
             registry = ToolRegistry()
-            tool_context = _try_direct_dispatch(message, registry)
+            router = ModelRouter()
+            model_cfg = router.select("default")
+            provider = model_cfg.get("provider", "")
+            sid = session.session_id
 
+            # ── Agentic mode gate ──
+            global_agentic = settings_store.get("agentic_mode", False)
+            per_message_agentic = body.get("agentic")  # None if not in POST body
+            agentic = per_message_agentic if per_message_agentic is not None else global_agentic
+
+            tool_context = ""
+
+            if not _is_conversational(message):
+                if not agentic:
+                    # ── Option 2: Single-tool fast path (no planning overhead) ──
+                    t0_tool = _time.perf_counter()
+                    tool_context = _try_direct_dispatch(message, registry)
+                    if tool_context:
+                        elapsed_tool = round(_time.perf_counter() - t0_tool, 1)
+                        yield _sse("tool_start", {"tool": "web_search", "step": 1, "action": message[:80]})
+                        yield _sse(
+                            "tool_stop", {"tool": "web_search", "step": 1, "seconds": elapsed_tool, "success": True}
+                        )
+                        logger.info("[chat/stream] Option 2 dispatch: %s", tool_context[:80])
+                    else:
+                        logger.info("[chat/stream] No tool triggered for: %s", message[:50])
+                else:
+                    # ── Option 2 fast path still applies within agentic mode ──
+                    t0_tool = _time.perf_counter()
+                    tool_context = _try_direct_dispatch(message, registry)
+                    if tool_context:
+                        elapsed_tool = round(_time.perf_counter() - t0_tool, 1)
+                        yield _sse("tool_start", {"tool": "web_search", "step": 1, "action": message[:80]})
+                        yield _sse(
+                            "tool_stop", {"tool": "web_search", "step": 1, "seconds": elapsed_tool, "success": True}
+                        )
+                        logger.info("[chat/stream] Agentic fast-path dispatch: %s", tool_context[:80])
+                    else:
+                        # ── Phase 1: PLAN ──
+                        yield _sse("planning_start", {"session_id": sid})
+                        t0_plan = _time.perf_counter()
+                        plan = await _stream_generate_plan(message, registry, router, session)
+                        plan_elapsed = round(_time.perf_counter() - t0_plan, 1)
+
+                        actionable = [s for s in (plan or []) if s.get("tool")]
+                        yield _sse("planning_stop", {"steps": len(actionable), "seconds": plan_elapsed})
+                        logger.info("[chat/stream] Plan: %d actionable steps in %.1fs", len(actionable), plan_elapsed)
+
+                        if actionable:
+                            # ── Phase 2: EXECUTE ──
+                            tool_parts: list[str] = []
+                            step_counter = 0
+
+                            for step in actionable:
+                                tool_name = step.get("tool")
+                                params_dict = step.get("params") or {}
+                                step_num = step.get("step", step_counter + 1)
+                                action_desc = step.get("action", tool_name)
+                                step_counter += 1
+
+                                yield _sse("tool_start", {"tool": tool_name, "step": step_num, "action": action_desc})
+                                t0_exec = _time.perf_counter()
+                                result = await asyncio.to_thread(registry.execute, tool_name, params_dict)
+                                elapsed_exec = round(_time.perf_counter() - t0_exec, 1)
+
+                                if result.get("success"):
+                                    raw_outcome = str(result.get("result", ""))[:1500]
+                                    outcome = _sanitize_tool_result(raw_outcome)
+                                    tool_parts.append(f"[{tool_name}]: {outcome}")
+                                    yield _sse(
+                                        "tool_stop",
+                                        {"tool": tool_name, "step": step_num, "seconds": elapsed_exec, "success": True},
+                                    )
+                                    logger.info("[chat/stream] Tool %s OK in %.1fs", tool_name, elapsed_exec)
+                                else:
+                                    error_msg = result.get("error", "Unknown error")
+                                    error_type = result.get("error_type", "execution_error")
+                                    logger.warning("[chat/stream] Tool %s failed: %s", tool_name, error_msg)
+                                    yield _sse(
+                                        "tool_error",
+                                        {
+                                            "tool": tool_name,
+                                            "step": step_num,
+                                            "error": error_msg[:200],
+                                            "error_type": error_type,
+                                        },
+                                    )
+
+                            tool_context = "\n".join(tool_parts)
+
+                            # ── Phase 2.5: REFLECT ──
+                            planning_model_id = settings_store.get("planning_model", "")
+                            if planning_model_id:
+                                planning_task = next(
+                                    (t for t, mid in router._routing_rules.items() if mid == planning_model_id),
+                                    "default",
+                                )
+                            else:
+                                planning_task = router.best_task_for("planning")
+
+                            MAX_REFLECT_CYCLES = 2
+                            for cycle in range(1, MAX_REFLECT_CYCLES + 1):
+                                yield _sse("reflect_start", {"cycle": cycle})
+                                t0_reflect = _time.perf_counter()
+                                verdict = await _stream_reflect(
+                                    message, tool_context, router, planning_task, registry, cycle
+                                )
+                                reflect_elapsed = round(_time.perf_counter() - t0_reflect, 1)
+
+                                if verdict["verdict"] == "ready":
+                                    yield _sse(
+                                        "reflect_stop",
+                                        {"cycle": cycle, "verdict": "ready", "tool": None, "seconds": reflect_elapsed},
+                                    )
+                                    logger.info("[chat/stream] Reflect cycle %d: ready (%.1fs)", cycle, reflect_elapsed)
+                                    break
+                                else:
+                                    extra_tool = verdict.get("tool")
+                                    extra_params = verdict.get("params") or {}
+                                    yield _sse(
+                                        "reflect_stop",
+                                        {
+                                            "cycle": cycle,
+                                            "verdict": "need_more",
+                                            "tool": extra_tool,
+                                            "seconds": reflect_elapsed,
+                                        },
+                                    )
+                                    logger.info("[chat/stream] Reflect cycle %d: need_more → %s", cycle, extra_tool)
+                                    step_counter += 1
+                                    yield _sse(
+                                        "tool_start",
+                                        {
+                                            "tool": extra_tool,
+                                            "step": step_counter,
+                                            "action": f"Additional: {extra_tool}",
+                                        },
+                                    )
+                                    t0_extra = _time.perf_counter()
+                                    extra_result = await asyncio.to_thread(registry.execute, extra_tool, extra_params)
+                                    elapsed_extra = round(_time.perf_counter() - t0_extra, 1)
+                                    if extra_result.get("success"):
+                                        raw = str(extra_result.get("result", ""))[:1500]
+                                        tool_parts.append(f"[{extra_tool}]: {_sanitize_tool_result(raw)}")
+                                        tool_context = "\n".join(tool_parts)
+                                        yield _sse(
+                                            "tool_stop",
+                                            {
+                                                "tool": extra_tool,
+                                                "step": step_counter,
+                                                "seconds": elapsed_extra,
+                                                "success": True,
+                                            },
+                                        )
+                                    else:
+                                        yield _sse(
+                                            "tool_error",
+                                            {
+                                                "tool": extra_tool,
+                                                "step": step_counter,
+                                                "error": extra_result.get("error", "")[:200],
+                                                "error_type": extra_result.get("error_type", "execution_error"),
+                                            },
+                                        )
+                                        break  # Tool failed — stop reflecting
+
+            # ── Phase 3: RESPOND ──
             system_content = "Reply concisely in plain text. No markdown formatting.\n\n" + build_sidecar_context(
                 memory_context=memory_ctx,
                 session_context=session.get_context_block(),
             )
-
-            # Append tool results to system context if any were executed
             if tool_context:
-                logger.info(f"[chat/stream] Tool dispatch succeeded: {tool_context[:100]}...")
-                system_content += f"\n\n[Tool Results]\n{tool_context}"
-            else:
-                logger.info(f"[chat/stream] No tool triggered for message: {message[:50]}")
+                system_content += "\n\n[Tool Results — base your reply on these]\n" + tool_context
 
             messages = [
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": message},
             ]
-
-            router = ModelRouter()
-            model_cfg = router.select("default")
-            provider = model_cfg.get("provider", "")
-            sid = session.session_id
 
             # ── llama_cpp streaming ──
             if provider == "llama_cpp":
@@ -1424,6 +1765,8 @@ async def get_settings() -> dict[str, Any]:
         "observation_interval": int(os.environ.get("ROAMIN_OBS_INTERVAL", "30")),
         "session_timeout_min": int(os.environ.get("ROAMIN_SESSION_TIMEOUT_MIN", "30")),
         "wake_threshold": float(os.environ.get("ROAMIN_WAKE_THRESHOLD", "0.5")),
+        "planning_model": persisted.get("planning_model", ""),
+        "agentic_mode": persisted.get("agentic_mode", False),
     }
 
 
@@ -1458,7 +1801,14 @@ async def update_settings(request: Request) -> dict[str, Any]:
 
     body = await request.json()
     # Whitelist of allowed keys to avoid arbitrary data injection
-    allowed = {"volume", "screenshots_enabled", "always_on_top", "default_model"}
+    allowed = {
+        "volume",
+        "screenshots_enabled",
+        "always_on_top",
+        "default_model",
+        "planning_model",  # Option 1 planning model designation
+        "agentic_mode",  # Option 1 global on/off gate
+    }
     updates = {k: v for k, v in body.items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No valid settings keys provided")

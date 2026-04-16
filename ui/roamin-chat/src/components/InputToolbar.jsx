@@ -25,6 +25,8 @@ export default function InputToolbar({
   onContextAttachmentChange,
   onOpenModelSidebar,
   onModelsRefresh,
+  agenticEnabled,   // null = use global setting, true = force on, false = force off
+  onAgenticChange,
 }) {
   const [openPopover, setOpenPopover] = useState(null); // "context"|"agent"|"tools"|"permission"|"project"|"model"
   const [selectingModel, setSelectingModel] = useState(null); // model id currently loading
@@ -157,6 +159,22 @@ export default function InputToolbar({
           />
         )}
       </div>
+
+      {/* Agentic loop toggle — null=global, true=force on, false=force off */}
+      <button
+        className={`toolbar-btn ${agenticEnabled === true ? "active agentic-on" : agenticEnabled === false ? "agentic-off" : ""}`}
+        title={agenticEnabled === true ? "Agentic loop: ON (click to reset to global)" : agenticEnabled === false ? "Agentic loop: OFF (click to reset to global)" : "Agentic loop: global setting (click to toggle)"}
+        onClick={() => {
+          if (onAgenticChange) {
+            // Cycle: null → true → false → null
+            if (agenticEnabled === null) onAgenticChange(true);
+            else if (agenticEnabled === true) onAgenticChange(false);
+            else onAgenticChange(null);
+          }
+        }}
+      >
+        ⚡
+      </button>
 
       <div className="toolbar-spacer" />
 

@@ -1259,3 +1259,156 @@ body {
   font-size: 12px;
   color: var(--accent);
 }
+
+/* --- Option 1 agentic toolbar button states --- */
+
+.toolbar-btn.agentic-on {
+  color: #f5c842;
+  border-color: #f5c842;
+}
+
+.toolbar-btn.agentic-off {
+  color: rgba(255,255,255,0.3);
+  border-color: rgba(255,255,255,0.15);
+}
+
+/* --- ToolStatus component --- */
+
+.tool-status {
+  margin: 4px 0 6px 0;
+  border-radius: 8px;
+  border: 1px solid rgba(196, 166, 232, 0.25);
+  background: rgba(26, 26, 46, 0.7);
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.tool-status.active {
+  border-color: rgba(196, 166, 232, 0.45);
+}
+
+.tool-status.done {
+  border-color: rgba(100, 220, 140, 0.25);
+}
+
+.tool-status-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tool-status-header:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tool-status-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.tool-status-icon.spinning {
+  display: inline-block;
+  animation: ts-spin 1.2s linear infinite;
+}
+
+@keyframes ts-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.tool-status-label {
+  flex: 1;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 11px;
+}
+
+.tool-status.done .tool-status-label {
+  color: rgba(100, 220, 140, 0.85);
+}
+
+.tool-status-chevron {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.35);
+  transition: transform 0.15s ease;
+}
+
+.tool-status-chevron.open {
+  transform: rotate(90deg);
+}
+
+.tool-status-body {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 4px 6px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ts-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+.ts-row.running {
+  background: rgba(196, 166, 232, 0.08);
+}
+
+.ts-row.ok {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.ts-row.error {
+  background: rgba(220, 80, 80, 0.1);
+  color: rgba(255, 120, 120, 0.85);
+}
+
+.ts-icon {
+  width: 14px;
+  text-align: center;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.ts-row.ok .ts-icon { color: rgba(100, 220, 140, 0.8); }
+.ts-row.error .ts-icon { color: rgba(220, 80, 80, 0.9); }
+.ts-row.running .ts-icon {
+  display: inline-block;
+  animation: ts-spin 1.2s linear infinite;
+  color: var(--accent);
+}
+
+.ts-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.ts-detail {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.ts-time {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 10px;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.ts-error {
+  color: rgba(255, 120, 120, 0.8);
+  font-size: 10px;
+  font-style: italic;
+  margin-left: auto;
+}
