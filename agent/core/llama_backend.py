@@ -71,6 +71,13 @@ QWEN3_CODER_NEXT = Path(
 )
 QWEN3_CODER_NEXT = QWEN3_CODER_NEXT if QWEN3_CODER_NEXT.exists() else None
 
+# --- Qwen3.5-27B Claude-4.6-Opus Reasoning Distilled (default chat + reasoning) ---
+QWEN35_27B_REASONING = Path(
+    r"C:\Users\Asherre Roamin\.lmstudio\models\mradermacher\Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-i1-GGUF"
+    r"\Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled.i1-Q4_K_S.gguf"
+)
+QWEN35_27B_REASONING = QWEN35_27B_REASONING if QWEN35_27B_REASONING.exists() else None
+
 # Capabilities that require the multimodal projection (mmproj) to be loaded.
 # Text-only capabilities (default, chat, fast) intentionally excluded — loading mmproj
 # adds ~350MB VRAM overhead and is wasted for pure text inference.
@@ -91,10 +98,10 @@ _MMPROJ_MAP: dict[Path | None, Path | None] = {
 }
 
 CAPABILITY_MAP: dict[str, Path | None] = {
-    # Qwen3-VL-8B abliterated — unified default: chat + vision + fast (4.7GB, uncensored)
-    "default": QWEN3_VL_8B,
-    "chat": QWEN3_VL_8B,
-    "fast": QWEN3_VL_8B,
+    # DeepSeek R1 8B — default chat with native <think> blocks
+    "default": DEEPSEEK_R1_8B,
+    "chat": DEEPSEEK_R1_8B,
+    "fast": QWEN3_VL_8B,  # VL 8B stays for fast/quick responses
     "vision": QWEN3_VL_8B,
     "screen_reading": QWEN3_VL_8B,
     # DeepSeek R1 8B — deep reasoning
@@ -115,8 +122,8 @@ CAPABILITY_MAP: dict[str, Path | None] = {
 # Reasoning and code models load exclusively (Qwen3-VL-8B unloads first), giving them
 # the VRAM headroom to support their full training context without overflow.
 _CAPABILITY_N_CTX: dict[str, int] = {
-    "default": 16384,
-    "chat": 16384,
+    "default": 32768,
+    "chat": 32768,
     "fast": 16384,
     "vision": 8192,
     "screen_reading": 8192,

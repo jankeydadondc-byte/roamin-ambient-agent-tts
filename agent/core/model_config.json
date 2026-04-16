@@ -59,10 +59,9 @@
     {
       "id": "deepseek-r1-8b-lmstudio",
       "name": "DeepSeek R1 Qwen3 8B",
-      "provider": "lmstudio",
+      "provider": "llama_cpp",
       "model_id": "DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf",
-      "endpoint": "http://127.0.0.1:1234",
-      "api_key_env": "LM_API_TOKEN",
+      "endpoint": "local://llama_cpp",
       "size_gb": 5.0,
       "capabilities": [
         "reasoning",
@@ -70,7 +69,8 @@
         "deep_thinking"
       ],
       "context_window": 32768,
-      "always_available": false
+      "always_available": true,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf"
     },
     {
       "id": "ministral-14b-lmstudio",
@@ -584,7 +584,7 @@
     }
   ],
   "routing_rules": {
-    "default": "qwen3-5-27b-claude-4-6-opus-reasoning-distilled-i1-q4-k-s",
+    "default": "deepseek-r1-8b-lmstudio",
     "chat": "qwen3-vl-8b-abliterated",
     "fast": "qwen3-vl-8b-abliterated",
     "vision": "qwen3-vl-8b-abliterated",

@@ -2,9 +2,9 @@
   "volume": 0.5,
   "screenshots_enabled": true,
   "always_on_top": false,
-  "default_model": "qwen3-5-27b-claude-4-6-opus-reasoning-distilled-i1-q4-k-s",
+  "default_model": "deepseek-r1-8b-lmstudio",
   "model_overrides": {
-    "default": "qwen3-5-27b-claude-4-6-opus-reasoning-distilled-i1-q4-k-s"
+    "default": "deepseek-r1-8b-lmstudio"
   },
   "tool_states": {
     "delete_file": false,
