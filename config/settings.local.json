@@ -2,9 +2,9 @@
   "volume": 0.5,
   "screenshots_enabled": true,
   "always_on_top": false,
-  "default_model": "ministral-3-14b-reasoning-2512-q4-k-m",
+  "default_model": "qwen3-5-27b-claude-4-6-opus-reasoning-distilled-i1-q4-k-s",
   "model_overrides": {
-    "default": "ministral-3-14b-reasoning-2512-q4-k-m"
+    "default": "qwen3-5-27b-claude-4-6-opus-reasoning-distilled-i1-q4-k-s"
   },
   "tool_states": {
     "delete_file": false,
@@ -12,6 +12,59 @@
     "run_cmd": false,
     "run_powershell": false,
     "run_python": false,
-    "write_file": false
-  }
+    "write_file": false,
+    "read_file": true,
+    "browse_web": true,
+    "search_web": true,
+    "send_email": false,
+    "grep": true,
+    "list_processes": false,
+    "search_files": true,
+    "monitor_clipboard": false,
+    "file_info": true,
+    "system_info": false,
+    "check_port": true,
+    "clipboard_read": true,
+    "clipboard_write": true,
+    "fetch_url": true,
+    "git_diff": true,
+    "git_log": true,
+    "git_status": true,
+    "glob": true,
+    "list_directory": true,
+    "memory_recall": true,
+    "memory_recent": true,
+    "memory_search": true,
+    "memory_write": true,
+    "notify": true,
+    "open_url": true,
+    "py_compile_check": true,
+    "take_screenshot": true,
+    "web_search": true
+  },
+  "model_params": {
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 40,
+    "repeat_penalty": 1.1,
+    "max_tokens": 348,
+    "context_length": 262144,
+    "n_gpu_layers": 159,
+    "n_threads": 24,
+    "n_batch": 320,
+    "n_parallel": 2,
+    "use_mlock": false,
+    "use_mmap": true,
+    "flash_attn": true,
+    "offload_kv": true,
+    "rope_freq_base": 0,
+    "rope_freq_scale": 0,
+    "type_k": "f16",
+    "type_v": "f16",
+    "seed": 0
+  },
+  "guardrail_tier": "balanced",
+  "model_scan_paths": [
+    "C:\\AI\\roamin-ambient-agent-tts\\models"
+  ]
 }

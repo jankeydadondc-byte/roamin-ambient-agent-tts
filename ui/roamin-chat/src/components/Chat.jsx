@@ -429,9 +429,11 @@ export default function Chat({
               <div className={`message ${msg.role}`}>
                 <div className="role">{msg.role === "user" ? "You" : "Roamin"}</div>
                 <div className="text">
-                  {searchQuery
-                    ? highlightText(msg.text, searchQuery, activeLocalIdx >= 0)
-                    : msg.text
+                  {msg._streaming && !msg.text && msg.reasoning === null
+                    ? <div className="thinking-skeleton" />
+                    : searchQuery
+                      ? highlightText(msg.text, searchQuery, activeLocalIdx >= 0)
+                      : msg.text
                   }
                 </div>
                 {/* Artifact chip */}
@@ -483,16 +485,6 @@ export default function Chat({
             </div>
           );
         })}
-
-        {/* Thinking skeleton while generating */}
-        {sending && (
-          <div className="message-wrapper assistant">
-            <div className="message assistant">
-              <div className="role">Roamin</div>
-              <div className="thinking-skeleton" />
-            </div>
-          </div>
-        )}
 
         <div ref={chatEndRef} />
       </div>

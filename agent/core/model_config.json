@@ -567,10 +567,24 @@
       "context_window": 32768,
       "always_available": false,
       "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\bartowski\\Qwen2.5-14B_Uncensored_Instruct-GGUF\\Qwen2.5-14B_Uncensored_Instruct-Q4_K_L.gguf"
+    },
+    {
+      "id": "qwen3-5-27b-claude-4-6-opus-reasoning-distilled-i1-q4-k-s",
+      "name": "Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled.i1-Q4_K_S",
+      "provider": "lmstudio",
+      "model_id": "qwen3.5-27b-claude-4.6-opus-reasoning-distilled-i1",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "reasoning",
+        "deep_thinking"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\mradermacher\\Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-i1-GGUF\\Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled.i1-Q4_K_S.gguf"
     }
   ],
   "routing_rules": {
-    "default": "qwen3-vl-8b-abliterated",
+    "default": "qwen3-5-27b-claude-4-6-opus-reasoning-distilled-i1-q4-k-s",
     "chat": "qwen3-vl-8b-abliterated",
     "fast": "qwen3-vl-8b-abliterated",
     "vision": "qwen3-vl-8b-abliterated",
