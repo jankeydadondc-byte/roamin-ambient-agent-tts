@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import traceback
+from enum import Enum, auto
 from pathlib import Path
 
 try:
@@ -510,6 +511,13 @@ def _handle_blocked_steps(blocked_steps: list[dict], memory: MemoryManager) -> N
             pass
 
 
+class _WakeState(Enum):
+    IDLE = auto()
+    LISTENING = auto()
+    PROCESSING = auto()
+    SPEAKING = auto()
+
+
 class WakeListener:
 
     def __init__(
@@ -526,6 +534,9 @@ class WakeListener:
         self._tts = tts
         self._agent_loop = agent_loop
         self._wake_lock = threading.Lock()
+        self._state = _WakeState.IDLE
+        self._stop_event = threading.Event()
+        self._state_lock = threading.Lock()  # guards _state; separate from _wake_lock
         self._last_wake_time = 0  # Track last wake trigger time (seconds)
         self._wake_debounce_interval = 0.5  # Ignore triggers within 500ms
         self._agent_running_event = threading.Event()  # Set while AgentLoop.run() is executing
@@ -567,6 +578,52 @@ class WakeListener:
             print("[Roamin] Hotkey listener stopped")
         except Exception as e:
             print(f"[Warning] Failed to unregister hotkey: {e}")
+
+    def _transition_to(self, state: _WakeState) -> None:
+        """Move to a new state. Must be called with _state_lock held.
+
+        Clears _stop_event unconditionally on every transition.
+        Calls tts.reset_stop() when transitioning to IDLE, ensuring every
+        new wake cycle and every explicit early-return starts with a clean
+        _stop_flag. This means 'yes?' always plays, and progress phrases
+        during PROCESSING observe any active stop signal without it being
+        pre-emptively wiped.
+        """
+        self._state = state
+        self._stop_event.clear()
+        if state == _WakeState.IDLE and self._tts is not None:
+            self._tts.reset_stop()
+        print(f"[Roamin] State → {state.name}", flush=True)
+
+    def _on_stop_word(self) -> None:
+        """Stop callback — fires when WakeWordListener detects 'stop roamin'.
+
+        Called from the audio thread. Thread-safe via _state_lock.
+
+        Does NOT call _transition_to() — that would clear _stop_event and
+        _stop_flag immediately, racing with the threads being signalled.
+        _state is set directly; _stop_event and _stop_flag stay set until
+        the next _transition_to(IDLE) clears them (at an explicit return in
+        _on_wake, or at the start of the next cycle).
+        """
+        with self._state_lock:
+            if self._state == _WakeState.IDLE:
+                return  # nothing active — no-op
+            print("[Roamin] Stop word detected — cancelling", flush=True)
+            self._stop_event.set()
+            self._state = _WakeState.IDLE
+
+        try:
+            if self._tts is not None:
+                self._tts.stop()
+        except Exception:
+            pass
+
+        try:
+            if self._agent_loop is not None:
+                self._agent_loop.cancel()
+        except Exception:
+            pass
 
     def _on_wake_thread(self) -> None:
         """Call _on_wake in a new thread (non-blocking). Drops if already running or recently triggered."""
@@ -725,6 +782,13 @@ class WakeListener:
         t0 = time.perf_counter()
         print("[Roamin] Wake triggered at t=0.000", flush=True)
 
+        # Reset state, _stop_event, and _stop_flag at the start of every cycle.
+        # _on_wake() runs under _wake_lock so the previous cycle has fully exited.
+        # _transition_to(IDLE) calls tts.reset_stop() — ensures "yes?" always plays
+        # even if a previous cycle ended mid-PROCESSING without reaching SPEAKING.
+        with self._state_lock:
+            self._transition_to(_WakeState.IDLE)
+
         # Use pre-loaded instances or lazy-load if not provided
         tts = self._tts or TextToSpeech()
         stt = self._stt or SpeechToText()
@@ -778,17 +842,22 @@ class WakeListener:
         _prewarm_thread.start()
 
         # STT — record and transcribe
+        with self._state_lock:
+            self._transition_to(_WakeState.LISTENING)
+
         transcription = None
         try:
-            transcription = stt.record_and_transcribe(duration_seconds=5)
+            transcription = stt.record_and_transcribe(duration_seconds=5, stop_event=self._stop_event)
         except Exception as e:
             print(f"[Warning] STT error: {e}", flush=True)
         t_stt = time.perf_counter()
         print(f"[Roamin] t={t_stt - t0:.3f}s  STT done (+{t_stt - t_greeted:.3f}s) -> '{transcription}'", flush=True)
 
         if transcription is None or transcription.strip() == "":
-            if tts.is_available():
+            if tts.is_available() and not self._stop_event.is_set():
                 tts.speak("Sorry, I didn't catch that.")
+            with self._state_lock:
+                self._transition_to(_WakeState.IDLE)
             return
 
         # Strip wake word prefix — Whisper sometimes transcribes the wake
@@ -803,8 +872,10 @@ class WakeListener:
         with self._pending_fingerprint_lock:
             if self._pending_fingerprint == _fp and (_now_fp - self._last_fingerprint_time) < self._fingerprint_ttl:
                 print(f"[Roamin] Duplicate request suppressed (fp={_fp[:8]})", flush=True)
-                if tts.is_available():
+                if tts.is_available() and not self._stop_event.is_set():
                     tts.speak_streaming("Already on it.")
+                with self._state_lock:
+                    self._transition_to(_WakeState.IDLE)
                 return
             self._pending_fingerprint = _fp
             self._last_fingerprint_time = _now_fp
@@ -814,8 +885,10 @@ class WakeListener:
         _lower = transcription.strip().lower()
         if _lower in ("new conversation", "start over", "reset conversation", "fresh start"):
             session.reset(reason="voice_command")
-            if tts.is_available():
+            if tts.is_available() and not self._stop_event.is_set():
                 tts.speak("Starting fresh. What's up?")
+            with self._state_lock:
+                self._transition_to(_WakeState.IDLE)
             return
 
         # Add user message to session transcript
@@ -889,7 +962,14 @@ class WakeListener:
                         f"(+{t_reply - t_dispatch:.3f}s) -> '{vision_reply}'"
                     )
                     if tts.is_available():
+                        with self._state_lock:
+                            if self._stop_event.is_set():
+                                self._transition_to(_WakeState.IDLE)
+                                return
+                            self._transition_to(_WakeState.SPEAKING)
                         tts.speak(vision_reply)
+                        with self._state_lock:
+                            self._transition_to(_WakeState.IDLE)
                     t_spoken = time.perf_counter()
                     print(f"[Roamin] t={t_spoken - t0:.3f}s  Reply spoken (+{t_spoken - t_reply:.3f}s)")
                     print(f"[Roamin] TOTAL: {t_spoken - t0:.3f}s")
@@ -923,6 +1003,15 @@ class WakeListener:
                 if _classify_intent(transcription) == "chat":
                     direct_result = {}  # sentinel: bypasses AgentLoop, goes straight to response
 
+        # Transition to PROCESSING before AgentLoop (or response generation if bypassed).
+        # Primary guard: if stop fired during LISTENING or the intent/dispatch blocks,
+        # bail here before any PROCESSING work starts.
+        with self._state_lock:
+            if self._stop_event.is_set():
+                self._transition_to(_WakeState.IDLE)
+                return
+            self._transition_to(_WakeState.PROCESSING)
+
         if direct_result is None:
             # Layer 2: AgentLoop — full planner for complex queries
             result = {}
@@ -933,16 +1022,16 @@ class WakeListener:
                 """Speak TTS cues for AgentLoop progress events."""
                 phase = event.get("phase")
                 if phase == "planning":
-                    if tts.is_available():
+                    if tts.is_available() and not self._stop_event.is_set():
                         tts.speak("Let me think...")
                 elif phase == "step_start":
                     total = event.get("total_steps", 0)
                     step_num = event.get("step", 0)
-                    if total > 2 and tts.is_available():
+                    if total > 2 and tts.is_available() and not self._stop_event.is_set():
                         tts.speak(f"Step {step_num} of {total}.")
                 elif phase == "step_done" and event.get("status") == "blocked":
                     step_num = event.get("step", 0)
-                    if tts.is_available():
+                    if tts.is_available() and not self._stop_event.is_set():
                         tts.speak(f"Step {step_num} couldn't be completed, it needs approval.")
 
             try:
@@ -958,8 +1047,10 @@ class WakeListener:
                     self._agent_running_event.clear()
             except Exception as e:
                 print(f"[Warning] AgentLoop error: {e}")
-                if tts.is_available():
+                if tts.is_available() and not self._stop_event.is_set():
                     tts.speak("I encountered an error processing that command.")
+                with self._state_lock:
+                    self._transition_to(_WakeState.IDLE)
                 return
             t_agent = time.perf_counter()
             print(
@@ -969,13 +1060,17 @@ class WakeListener:
 
             status = result.get("status", "unknown")
             if status == "cancelled":
-                if tts.is_available():
+                if tts.is_available() and not self._stop_event.is_set():
                     tts.speak("Got it, stopping.")
+                with self._state_lock:
+                    self._transition_to(_WakeState.IDLE)
                 return
             if status == "blocked":
-                if tts.is_available():
+                if tts.is_available() and not self._stop_event.is_set():
                     tts.speak("That requires your approval. Check your notifications.")
                 _handle_blocked_steps(result.get("blocked_steps", []), memory)
+                with self._state_lock:
+                    self._transition_to(_WakeState.IDLE)
                 return
             # status == "failed": do NOT return — fall through to ModelRouter so
             # conversational queries ("what is X?", "who are you?") still get answered.
@@ -1183,6 +1278,12 @@ class WakeListener:
         # Think-tier (150-char cap, 2 sentences): speak_streaming() — pipeline synthesis.
         #   With 2 sentences, sentence 2 synthesizes while sentence 1 plays.
         #   User hears first sentence after ~8s instead of waiting for all ~15s of synthesis.
+        with self._state_lock:
+            if self._stop_event.is_set():
+                self._transition_to(_WakeState.IDLE)
+                return
+            self._transition_to(_WakeState.SPEAKING)
+
         if tts.is_available():
             if no_think:
                 tts.speak(reply)
@@ -1191,6 +1292,9 @@ class WakeListener:
         t_spoken = time.perf_counter()
         print(f"[Roamin] t={t_spoken - t0:.3f}s  Reply spoken (+{t_spoken - t_reply:.3f}s)")
         print(f"[Roamin] TOTAL: {t_spoken - t0:.3f}s")
+
+        with self._state_lock:
+            self._transition_to(_WakeState.IDLE)
 
         # Show approval toasts for any blocked steps (non-fatal)
         _handle_blocked_steps(result.get("blocked_steps", []) if result else [], memory)

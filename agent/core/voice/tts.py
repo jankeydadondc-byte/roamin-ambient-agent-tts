@@ -17,6 +17,8 @@ import hashlib
 import re
 import struct
 import tempfile
+import threading
+from itertools import count
 from pathlib import Path
 
 try:
@@ -37,6 +39,7 @@ _VOICE_SAMPLE = Path(r"C:\AI\chatterbox-api\voice-sample.mp3")
 _DISABLE_FLAG = Path(__file__).parents[3] / "logs" / ".disable-chatterbox"
 _TMP_DIR = Path(tempfile.gettempdir()) / "roamin_tts"
 _CACHE_DIR = Path(__file__).parent / "phrase_cache"
+_play_counter = count(1)  # unique suffix for tts-play-N thread names
 
 # Pre-defined phrases to cache as WAV files at startup.
 # Speak these instantly without hitting Chatterbox API.
@@ -248,6 +251,7 @@ class TextToSpeech:
     def __init__(self) -> None:
         self._pyttsx3_engine = None
         self._phrase_cache: dict[str, Path] = {}  # text -> WAV path
+        self._stop_flag = threading.Event()
         self._init_pyttsx3()
         _TMP_DIR.mkdir(parents=True, exist_ok=True)
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -307,6 +311,29 @@ class TextToSpeech:
             text = text.replace(written, phonetic)
         return text
 
+    def stop(self) -> None:
+        """Signal active playback to stop. Sets _stop_flag and issues winsound.SND_PURGE.
+
+        SND_PURGE is immediate, thread-safe, and safe when nothing is playing.
+        _stop_flag is NOT cleared here — it survives until reset_stop() is called
+        (from WakeListener._transition_to(IDLE)) so progress speak calls during
+        PROCESSING observe it correctly.
+        """
+        self._stop_flag.set()
+        try:
+            import winsound
+
+            winsound.PlaySound(None, winsound.SND_PURGE)
+        except Exception:
+            pass
+
+    def reset_stop(self) -> None:
+        """Clear the stop flag. Called by WakeListener._transition_to(IDLE) to
+        ensure each new wake cycle and each explicit early-return starts with a
+        clean flag — so 'yes?' and post-stop response phrases always play.
+        """
+        self._stop_flag.clear()
+
     def speak(self, text: str) -> None:
         """Speak text. Uses cached WAV if available, then Chatterbox, then pyttsx3."""
         text = self._apply_pronunciation(text)
@@ -322,17 +349,19 @@ class TextToSpeech:
         # Fall through to live synthesis
         if _chatterbox_available():
             self._speak_chatterbox(text)
-        else:
+        elif not self._stop_flag.is_set():
             self._speak_pyttsx3(text)
 
     def _speak_chatterbox(self, text: str, dest_path: Path | None = None) -> None:
         """Send text to Chatterbox API and play the returned audio."""
         if _requests is None:
-            self._speak_pyttsx3(text)
+            if not self._stop_flag.is_set():
+                self._speak_pyttsx3(text)
             return
         url = _find_chatterbox_url()
         if url is None:
-            self._speak_pyttsx3(text)
+            if not self._stop_flag.is_set():
+                self._speak_pyttsx3(text)
             return
         try:
             out = dest_path if dest_path is not None else _TMP_DIR / "chatterbox_out.wav"
@@ -345,10 +374,12 @@ class TextToSpeech:
                         pass
             else:
                 print("[TTS] Chatterbox synthesis failed — falling back to SAPI")
-                self._speak_pyttsx3(text)
+                if not self._stop_flag.is_set():
+                    self._speak_pyttsx3(text)
         except Exception as e:
             print(f"[TTS] Chatterbox error: {e} — falling back to SAPI")
-            self._speak_pyttsx3(text)
+            if not self._stop_flag.is_set():
+                self._speak_pyttsx3(text)
 
     def speak_streaming(self, text: str) -> None:
         """Speak text with a sentence-chunked pipeline.
@@ -366,6 +397,8 @@ class TextToSpeech:
         if url is None:
             # Fallback path — sequential pyttsx3
             for sentence in sentences:
+                if self._stop_flag.is_set():
+                    return
                 self._speak_pyttsx3(sentence)
             return
 
@@ -376,11 +409,19 @@ class TextToSpeech:
                 return dest
             return None
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        early_stop = False
+        wav_path: Path | None = None
+
+        try:
             # Pre-synthesize the first sentence before entering the loop
             future = executor.submit(_synth, sentences[0], 0)
 
             for i, sentence in enumerate(sentences):
+                if self._stop_flag.is_set():
+                    early_stop = True
+                    break
+
                 # Submit synthesis of the NEXT sentence while we wait/play the current one
                 next_future: concurrent.futures.Future | None = None
                 if i + 1 < len(sentences):
@@ -393,16 +434,34 @@ class TextToSpeech:
                     print(f"[TTS] Streaming synthesis failed for sentence {i}: {e} — SAPI fallback")
                     wav_path = None
 
+                if self._stop_flag.is_set():
+                    early_stop = True
+                    break
+
                 if wav_path is not None:
                     self._play_wav(wav_path)
                     try:
                         wav_path.unlink(missing_ok=True)
+                        wav_path = None
                     except OSError:
                         pass
-                else:
+                elif not self._stop_flag.is_set():
                     self._speak_pyttsx3(sentence)
 
                 future = next_future  # type: ignore[assignment]
+
+        finally:
+            if early_stop:
+                # Abandon without blocking — in-flight worker exits within its HTTP
+                # timeout in the background. See Non-Goals re: exit hang.
+                executor.shutdown(wait=False, cancel_futures=True)
+                if wav_path is not None:
+                    try:
+                        wav_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            else:
+                executor.shutdown(wait=True)
 
     def _speak_sapi_subprocess(self, text: str) -> None:
         """Speak via Windows SAPI using PowerShell — works from any thread, no COM affinity."""
@@ -471,14 +530,43 @@ class TextToSpeech:
             pass  # non-fatal — play at whatever volume is set
 
     def _play_wav(self, path: Path) -> None:
-        """Play a WAV file using winsound with volume from settings."""
-        try:
-            import winsound
+        """Play a WAV file. Interruptible via stop().
 
-            self._apply_volume()
-            winsound.PlaySound(str(path), winsound.SND_FILENAME)
-        except Exception as e:
-            print(f"[TTS] playback error: {e}")
+        Spawns a daemon side thread for the blocking winsound call so this
+        method can poll _stop_flag at 50ms intervals. Thread is daemon=True
+        so it does not block process exit.
+        """
+        import winsound
+
+        self._apply_volume()
+        play_done = threading.Event()
+
+        def _play() -> None:
+            try:
+                winsound.PlaySound(str(path), winsound.SND_FILENAME)
+            except Exception as e:
+                print(f"[TTS] playback error: {e}")
+            finally:
+                play_done.set()  # always fires, even on exception
+
+        play_thread = threading.Thread(
+            target=_play,
+            daemon=True,
+            name=f"tts-play-{next(_play_counter)}",
+        )
+        play_thread.start()
+
+        while not play_done.wait(timeout=0.05):
+            if self._stop_flag.is_set():
+                try:
+                    winsound.PlaySound(None, winsound.SND_PURGE)
+                except Exception:
+                    pass
+                play_done.wait(timeout=0.5)  # brief grace for side thread to observe purge
+                return  # stop path — no join
+
+        # Normal completion. play_done fired from finally in the side thread;
+        # thread is daemon=True and holds no resources. No join needed.
 
     def is_available(self) -> bool:
         """Always True — at minimum pyttsx3 is available."""

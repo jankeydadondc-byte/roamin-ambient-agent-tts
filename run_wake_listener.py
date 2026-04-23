@@ -393,7 +393,7 @@ def main() -> None:
     # Both triggers call the same _on_wake_thread function on the WakeListener
     wake_word = WakeWordListener(
         on_detect=listener._on_wake_thread,
-        on_stop_detect=None,  # Wired to TTS cancel in 11.2
+        on_stop_detect=listener._on_stop_word,
     )
     if wake_word.start():
         print('[Roamin] Wake word listener active — say "Hey Roamin" to activate.')
@@ -412,18 +412,18 @@ def main() -> None:
         _orig_record = stt.record_and_transcribe
 
         def _speak_paused(text: str) -> None:
-            wake_word.pause()
+            wake_word.start_stop_listening()
             try:
                 _orig_speak(text)
             finally:
-                wake_word.resume()
+                wake_word.stop_stop_listening()
 
         def _speak_streaming_paused(text: str) -> None:
-            wake_word.pause()
+            wake_word.start_stop_listening()
             try:
                 _orig_speak_streaming(text)
             finally:
-                wake_word.resume()
+                wake_word.stop_stop_listening()
 
         def _record_paused(*args, **kwargs):
             wake_word.pause()

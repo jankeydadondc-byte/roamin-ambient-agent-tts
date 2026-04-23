@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import numpy as np
 
@@ -60,7 +61,11 @@ class SpeechToText:
                 print(f"[Warning] Failed to load Silero VAD model: {e}")
                 self._vad_model = None
 
-    def record_and_transcribe(self, duration_seconds: int = 5) -> str | None:
+    def record_and_transcribe(
+        self,
+        duration_seconds: int = 5,
+        stop_event: threading.Event | None = None,
+    ) -> str | None:
         """
         Record audio and transcribe using Whisper.
 
@@ -69,6 +74,7 @@ class SpeechToText:
 
         Args:
             duration_seconds: Duration of fallback recording (default 5 seconds)
+            stop_event: If set, recording is abandoned and None is returned.
 
         Returns:
             Transcribed text or None on failure
@@ -79,7 +85,7 @@ class SpeechToText:
 
         # Fallback to fixed-duration recording if Silero VAD not available
         if self._vad_model is None:
-            return self._record_fixed(duration_seconds)
+            return self._record_fixed(duration_seconds, stop_event=stop_event)
 
         sample_rate = 16000
         chunk_size = 512  # samples per chunk (~32ms at 16kHz)
@@ -153,7 +159,16 @@ class SpeechToText:
                 blocksize=chunk_size,
                 callback=callback,
             ):
-                done_event.wait(timeout=12)  # max 12s safety wall
+                # Poll at 50ms intervals so stop_event can interrupt recording.
+                # done_event fires via VAD callback (CallbackStop); deadline is safety wall.
+                deadline = time.monotonic() + 12
+                while not done_event.is_set():
+                    if stop_event is not None and stop_event.is_set():
+                        done_event.set()
+                        break
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(0.05)
 
         except sd.CallbackStop:
             pass  # Normal termination via VAD logic
@@ -162,6 +177,10 @@ class SpeechToText:
             return None
 
         if not audio_buffer:
+            return None
+
+        # Skip Whisper if stop fired during recording — discard captured audio
+        if stop_event is not None and stop_event.is_set():
             return None
 
         try:
@@ -182,7 +201,11 @@ class SpeechToText:
             print(f"[Warning] STT transcription failed: {e}")
             return None
 
-    def _record_fixed(self, duration_seconds: int = 5) -> str | None:
+    def _record_fixed(
+        self,
+        duration_seconds: int = 5,
+        stop_event: threading.Event | None = None,
+    ) -> str | None:
         """Fallback fixed-duration recording for when Silero VAD is unavailable."""
         if sd is None or self._model is None:
             return None
@@ -190,6 +213,20 @@ class SpeechToText:
         try:
             print(f"[Roamin] Listening for {duration_seconds} seconds (fallback mode)...")
             recording = sd.rec(int(duration_seconds * sample_rate), samplerate=sample_rate, channels=1, dtype="float32")
+
+            if stop_event is not None:
+
+                def _watchdog() -> None:
+                    # Bounded — expires naturally when recording ends. No thread leak.
+                    stop_event.wait(timeout=duration_seconds + 2)
+                    if stop_event.is_set():
+                        try:
+                            sd.stop()  # safe on idle device — no exception
+                        except Exception:
+                            pass
+
+                threading.Thread(target=_watchdog, daemon=True, name="stt-stop-watchdog").start()
+
             sd.wait()
 
             audio = recording.flatten()
