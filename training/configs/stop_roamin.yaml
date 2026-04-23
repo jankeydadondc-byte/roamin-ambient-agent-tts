@@ -1,0 +1,55 @@
+# Consolidated stop-word training config — 7 phrases, one model.
+# OWW natively iterates the target_phrase list; single --generate_clips pass covers all phrases.
+# All field names confirmed from openwakeword/train.py source (2026-04-17)
+#
+# v2 retrain — scaled for 7 phrases:
+#   n_samples:     14000 total  →  ~2000 per phrase  (was 715)
+#   n_samples_val:  1400 total  →  ~200 per phrase   (was  71)
+#   augmentation_rounds: 10    →  140,000 augmented training examples
+#   steps:         90800        →  2× original, matches larger dataset
+
+model_name: stop_roamin
+output_dir: "training/out/"
+
+piper_sample_generator_path: "training/piper_shim"
+custom_negative_phrases: []
+
+# Stage 1: --generate_clips (piper-sample-generator)
+# All 7 stop phrases in one list — OWW distributes n_samples across them
+target_phrase:
+  - "stop roamin"
+  - "roamin stop"
+  - "shutup"
+  - "hey shutup"
+  - "roamin shutup"
+  - "be quiet"
+  - "silence"
+n_samples: 14000                     # total across all 7 phrases (~2000 each)
+n_samples_val: 1400                  # held-out validation positives (~200 each)
+tts_batch_size: 100
+
+# Stage 2: --augment_clips
+augmentation_batch_size: 100
+augmentation_rounds: 10              # 14000 × 10 = 140,000 total training examples
+background_paths:
+  - "training/data/background/"
+background_paths_duplication_rate:
+  - 1
+rir_paths:
+  - "training/data/rir/"
+
+# Model architecture — wider layer to handle 7-phrase diversity
+model_type: "dnn"
+layer_size: 256                      # doubled from 128 to capture broader phrase set
+batch_n_per_class: {}                # empty dict → OWW auto-calculates per-class batch sizes
+
+# Validation data
+false_positive_validation_data_path: "training/data/validation_set_features.npy"
+
+# Required dict — script auto-populates positive/adversarial_negative keys
+feature_data_files: {}
+
+# Stage 3: --train_model — 2× steps to match 2.8× more data
+steps: 90800
+max_negative_weight: 300
+target_false_positives_per_hour: 0.2

@@ -15,6 +15,7 @@ from __future__ import annotations
 import concurrent.futures
 import hashlib
 import re
+import struct
 import tempfile
 from pathlib import Path
 
@@ -40,7 +41,7 @@ _CACHE_DIR = Path(__file__).parent / "phrase_cache"
 # Pre-defined phrases to cache as WAV files at startup.
 # Speak these instantly without hitting Chatterbox API.
 CACHED_PHRASES: list[str] = [
-    "yes? how can i help you",
+    "yes?",
     "Done.",
     "Sorry, I didn't catch that.",
     "Working on it.",
@@ -61,7 +62,7 @@ CACHED_PHRASES: list[str] = [
 # Per-phrase synthesis overrides — tune exaggeration/cfg_weight per phrase
 # Default: exaggeration=0.5, cfg_weight=0.5
 PHRASE_PARAMS: dict[str, dict] = {
-    "yes? how can i help you": {"exaggeration": 0.6, "cfg_weight": 0.4},
+    "yes?": {"exaggeration": 0.6, "cfg_weight": 0.4},
     "On it.": {"exaggeration": 0.6, "cfg_weight": 0.4},
     "Got it.": {"exaggeration": 0.6, "cfg_weight": 0.4},
 }
@@ -70,6 +71,87 @@ PHRASE_PARAMS: dict[str, dict] = {
 def _phrase_cache_key(text: str) -> str:
     """Generate a safe filename key for a cached phrase."""
     return hashlib.md5(text.encode()).hexdigest() + ".wav"
+
+
+def _trim_wav_silence(path: Path, max_duration_s: float = 0.75) -> None:
+    """Trim trailing silence from a WAV file, capping total duration at max_duration_s.
+
+    Parses WAV binary directly — supports both PCM int16 (format 1) and
+    IEEE float32 (format 3, what Chatterbox outputs). Python's wave module
+    only handles format 1, hence the manual parsing.
+
+    Operates in-place. No-ops if already within max_duration_s or trim < 100ms.
+    """
+    try:
+        raw = path.read_bytes()
+
+        if raw[:4] != b"RIFF" or raw[8:12] != b"WAVE":
+            return
+
+        # Scan all chunks
+        pos = 12
+        chunks: dict[bytes, bytes] = {}
+        while pos + 8 <= len(raw):
+            cid = raw[pos : pos + 4]
+            csize = struct.unpack_from("<I", raw, pos + 4)[0]
+            chunks[cid] = raw[pos + 8 : pos + 8 + csize]
+            pos += 8 + csize + (csize % 2)  # odd-size chunks have a pad byte
+
+        if b"fmt " not in chunks or b"data" not in chunks:
+            return
+
+        fmt = chunks[b"fmt "]
+        audio_fmt = struct.unpack_from("<H", fmt, 0)[0]
+        n_channels = struct.unpack_from("<H", fmt, 2)[0]
+        sample_rate = struct.unpack_from("<I", fmt, 4)[0]
+        bits = struct.unpack_from("<H", fmt, 14)[0]
+
+        audio_bytes = chunks[b"data"]
+
+        if audio_fmt == 1 and bits == 16:
+            # PCM int16 — threshold in absolute int16 units (~0.6% of full scale)
+            n = len(audio_bytes) // 2
+            samples = struct.unpack(f"<{n}h", audio_bytes)
+            threshold = 200
+            pack_char = "h"
+        elif audio_fmt == 3 and bits == 32:
+            # IEEE float32 — threshold as fraction of full scale
+            n = len(audio_bytes) // 4
+            samples = struct.unpack(f"<{n}f", audio_bytes)
+            threshold = 0.006
+            pack_char = "f"
+        else:
+            return  # unsupported format
+
+        # Scan backwards to find last sample above silence threshold
+        last_loud = len(samples) - 1
+        while last_loud > 0 and abs(samples[last_loud]) < threshold:
+            last_loud -= 1
+
+        # Keep 50ms of tail after last loud sample so speech doesn't clip
+        tail = int(sample_rate * n_channels * 0.05)
+        keep = min(last_loud + tail, len(samples))
+
+        # Hard cap at max_duration_s
+        keep = min(keep, int(sample_rate * n_channels * max_duration_s))
+
+        # Skip rewrite if we're saving less than 100ms
+        trim_s = (len(samples) - keep) / (sample_rate * n_channels)
+        if trim_s < 0.1:
+            return
+
+        new_dur = keep / (sample_rate * n_channels)
+        trimmed_bytes = struct.pack(f"<{keep}{pack_char}", *samples[:keep])
+
+        # Reconstruct minimal WAV file
+        fmt_chunk = b"fmt " + struct.pack("<I", len(fmt)) + fmt
+        data_chunk = b"data" + struct.pack("<I", len(trimmed_bytes)) + trimmed_bytes
+        body = b"WAVE" + fmt_chunk + data_chunk
+        path.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
+
+        print(f"[TTS] Trimmed '{path.name}': {new_dur + trim_s:.2f}s → {new_dur:.2f}s")
+    except Exception as e:
+        print(f"[TTS] WAV trim failed ({path.name}): {e}")
 
 
 # Common abbreviations that should NOT be treated as sentence boundaries.
@@ -202,6 +284,13 @@ class TextToSpeech:
                 if _synthesize_to_file(phrase, url, dest, **params):
                     self._phrase_cache[phrase] = dest
                     generated += 1
+
+        # Trim trailing silence from short acknowledgment phrases so STT opens faster.
+        # "yes?" in particular has ~1.3s of Chatterbox tail padding that we strip here.
+        for phrase in ("yes?", "On it.", "Got it."):
+            if phrase in self._phrase_cache:
+                _trim_wav_silence(self._phrase_cache[phrase], max_duration_s=0.75)
+
         print(f"[TTS] Phrase cache ready: {generated} generated, {skipped} loaded from disk")
 
     # Pronunciation guide

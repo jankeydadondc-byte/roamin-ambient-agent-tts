@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import traceback
+from pathlib import Path
 
 try:
     import keyboard
@@ -49,6 +50,16 @@ _WAKE_PREFIXES = re.compile(
     re.IGNORECASE,
 )
 
+# Patterns Whisper may produce when transcribing "hey roamin" — used to
+# validate that the OWW trigger audio actually contains the wake phrase.
+_WAKE_CONFIRM_RE = re.compile(
+    r"hey[\s,]*ro+a?m(?:in|ing|aine?|an|ine|ba)"  # hey roamin/roaming/romaine/roman/roba
+    r"|hey[\s,]*row?m"  # hey rom / hey rowm
+    r"|a[\s,]+ro+a?m(?:in|ing)"  # a roamin (Whisper mishear of "hey")
+    r"|ro+a?m(?:in|ing|an)\b",  # roamin/roaming/roman alone
+    re.IGNORECASE,
+)
+
 
 def _strip_wake_prefix(text: str) -> str:
     """Remove a leading wake-word prefix from the STT transcription.
@@ -74,6 +85,49 @@ def _make_request_fingerprint(transcription: str) -> str:
 
     normalised = " ".join(transcription.lower().split())
     return hashlib.sha256(normalised.encode("utf-8")).hexdigest()
+
+
+def _classify_intent(transcription: str) -> str:
+    """Classify transcription as 'tool' or 'chat' using a two-token LLM call.
+
+    Uses the loaded GGUF backend directly (bypasses ModelRouter overhead).
+    Forces output to exactly two tokens at temperature=0.0 — deterministic.
+
+    Returns 'tool' if AgentLoop should run, 'chat' if direct response is better.
+    Falls back to 'tool' (conservative) on any error — running AgentLoop
+    unnecessarily costs latency; skipping it when needed gives a wrong answer.
+    Wrong is worse than slow.
+    """
+    try:
+        from agent.core.llama_backend import _REGISTRY, CAPABILITY_MAP
+
+        cap = "chat" if "chat" in CAPABILITY_MAP else "default"
+        backend = _REGISTRY.get_backend(cap)
+        if not backend.is_loaded():
+            return "tool"  # pre-warm hasn't fired yet — conservative fallback
+
+        prompt = (
+            "You are a routing classifier. Read the user query and reply with exactly "
+            "one word — either TOOL or CHAT.\n\n"
+            "Reply TOOL if the query asks you to DO something on the computer: "
+            "search the web, open or read a file, run a program, control an app, "
+            "take a screenshot, send a message, download something, or perform "
+            "any action that requires a tool.\n\n"
+            "Reply CHAT if the query is a question, opinion, explanation, "
+            "conversation, or anything that can be answered from knowledge alone.\n\n"
+            f'User query: "{transcription}"\n'
+            "Your one-word answer (TOOL or CHAT):"
+        )
+        result = backend.generate(prompt, max_tokens=2, temperature=0.0)
+        verdict = result.strip().upper()
+        if "TOOL" in verdict:
+            print(f"[Roamin] Intent: TOOL — '{transcription[:60]}'", flush=True)
+            return "tool"
+        print(f"[Roamin] Intent: CHAT — '{transcription[:60]}'", flush=True)
+        return "chat"
+    except Exception as e:
+        print(f"[Roamin] Intent classifier error ({e}) — defaulting to TOOL", flush=True)
+        return "tool"
 
 
 def _classify_think_level(text: str) -> tuple[bool, int]:
@@ -116,7 +170,9 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
         return False, 2048
 
     low_triggers = [
-        "think about",
+        # NOTE: "think about" removed — it's a substring of "what do you think about X"
+        # which is a casual opinion question, not an explicit reasoning request.
+        # Use "think through X" to explicitly request think-tier reasoning.
         "think through",
         "analyze",
         "analyse",
@@ -124,7 +180,10 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
         "explain how",
         "reason through",
         "figure out",
-        "what do you think",
+        # NOTE: "what do you think" intentionally removed — it's a casual opinion/social phrase
+        # ("what do you think about this comedian?") that does not require reasoning-tier inference.
+        # It would route casual queries to think mode and exhaust the token budget on hallucination.
+        # If you need reasoning about something, use "think about X" or "think through X".
         "help me decide",
         "compare",
         "pros and cons",
@@ -137,9 +196,11 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
         "what if",
     ]
     if any(t in lower for t in low_triggers):
-        return False, 512
+        # 512 tokens was insufficient — the thinking phase alone consumes 300-400+ tokens,
+        # leaving no budget for the actual answer. 1500 gives room for think + response.
+        return False, 1500
 
-    return True, 60
+    return True, 28  # ~20 words / ~100 chars — keeps Chatterbox TTS under ~12s
 
 
 # ---------------------------------------------------------------------------
@@ -564,6 +625,101 @@ class WakeListener:
 
         return build_memory_context(transcription, memory)
 
+    @staticmethod
+    def _play_wake_chime() -> None:
+        """Play an 880Hz chime to confirm the wake phrase was validated.
+
+        Fires after Whisper confirms the trigger audio contains "hey roamin" —
+        not on raw OWW detection. The chime signals to the user: "I heard the
+        correct phrase, wait for my reply." Uses winsound.Beep (Windows system
+        call, no Chatterbox dependency, no mic interference).
+        """
+        try:
+            import winsound
+
+            threading.Thread(
+                target=lambda: winsound.Beep(880, 120),
+                daemon=True,
+            ).start()
+        except Exception:
+            pass  # non-fatal — chime is convenience, not critical path
+
+    @staticmethod
+    def _find_latest_trigger_audio() -> Path | None:
+        """Return the most recently saved OWW trigger audio, if within 5s."""
+        trigger_dir = Path(__file__).parents[3] / "logs" / "wake_triggers"
+        if not trigger_dir.exists():
+            return None
+        files = sorted(trigger_dir.glob("*.wav"), key=lambda f: f.stat().st_mtime)
+        if not files:
+            return None
+        latest = files[-1]
+        if time.time() - latest.stat().st_mtime < 5.0:
+            return latest
+        return None
+
+    @staticmethod
+    def _validate_wake_phrase(trigger_path: Path, stt: "SpeechToText") -> bool:
+        """Transcribe trigger audio and confirm it contains the wake phrase.
+
+        Prevents OWW false positives (e.g. "hey" alone firing at 0.99) by
+        running Whisper on the end of the 2s rolling buffer saved at detection
+        time.
+
+        Why last-1s only: the rolling buffer captures 2s ending at detection.
+        "Hey Roamin" (~700ms) sits at the tail; the leading ~1.3s is ambient
+        silence. Passing the full 2s causes Whisper to hallucinate text on the
+        silence ("Takes.", "Okay.", "That's weird."). Slicing to the last 1s
+        puts the actual phrase at the center of the input and eliminates the
+        leading-silence hallucination problem.
+
+        Fails OPEN on exception or missing model — so a Whisper error never
+        silently blocks a legitimate wake. Fails CLOSED on empty/non-wake text.
+        """
+        try:
+            if stt._model is None:
+                return True  # Whisper not loaded — fail open
+
+            import wave
+
+            import numpy as np
+
+            # Read trigger WAV — always 16kHz mono int16 (written by wake_word.py)
+            with wave.open(str(trigger_path), "rb") as wf:
+                sample_rate = wf.getframerate()
+                frames = wf.readframes(wf.getnframes())
+
+            audio_int16 = np.frombuffer(frames, dtype=np.int16)
+            # Slice to last 1.5 seconds — OWW fires mid-phrase so the tail of
+            # the 2s buffer is most likely to contain "hey roamin". 1.5s gives
+            # ~800ms of leading context plus ~700ms of the wake phrase.
+            audio_int16 = audio_int16[-int(sample_rate * 1.5) :]
+            audio_float = audio_int16.astype(np.float32) / 32768.0
+
+            result = stt._model.transcribe(
+                audio_float,
+                language="en",
+                no_speech_threshold=0.6,
+                initial_prompt="Hey Roamin.",  # bias decoder toward the wake phrase
+            )
+            text = result.get("text", "").strip()
+
+            if not text:
+                # Empty transcription = OWW fired before the phrase was complete
+                # and Whisper heard only partial/quiet audio. "hey" alone reliably
+                # transcribes as "Hey." — empty means the phrase was cut off, not
+                # that a short sound triggered it. Fail open.
+                print("[Roamin] Wake validation (PASS): <no speech — early fire, allowing>", flush=True)
+                return True
+
+            matched = bool(_WAKE_CONFIRM_RE.search(text))
+            status = "PASS" if matched else "REJECT"
+            print(f"[Roamin] Wake validation ({status}): '{text}'", flush=True)
+            return matched
+        except Exception as e:
+            print(f"[Roamin] Wake validation error ({e}) — allowing through", flush=True)
+            return True  # fail open on unexpected errors
+
     def _on_wake(self) -> None:
         """Handle wake word trigger: listen for command and execute."""
         t0 = time.perf_counter()
@@ -574,11 +730,52 @@ class WakeListener:
         stt = self._stt or SpeechToText()
         agent_loop = self._agent_loop or AgentLoop()
 
+        # Phrase validation — confirm OWW trigger audio contains "hey roamin".
+        # OWW currently false-fires on "hey" alone (model limitation). Whisper
+        # transcribes the 2s rolling buffer saved at detection time and checks
+        # it against _WAKE_CONFIRM_RE. Suppresses ~200ms of latency worth of
+        # false positives; fails open on errors so legit wakes are never lost.
+        trigger_path = self._find_latest_trigger_audio()
+        if trigger_path is not None:
+            if not self._validate_wake_phrase(trigger_path, stt):
+                print("[Roamin] Wake suppressed — phrase not confirmed in trigger audio", flush=True)
+                return
+
+        # CHIME — fires here, after phrase is confirmed, BEFORE "yes?".
+        # Signals to user: "I heard 'hey roamin' correctly, reply is coming."
+        # Semantically distinct from "yes?" — chime = wake confirmed,
+        # "yes?" = ready for your command.
+        self._play_wake_chime()
+
+        # 300ms gap between chime and "yes?" so the two sounds are clearly
+        # separate — chime as confirmation, then Roamin's verbal response.
+        time.sleep(0.3)
+
         # Greet user
         if tts.is_available():
-            tts.speak("yes? how can i help you")
+            tts.speak("yes?")
         t_greeted = time.perf_counter()
         print(f"[Roamin] t={t_greeted - t0:.3f}s  'Yes?' spoken", flush=True)
+
+        # GGUF pre-warm — start loading the default model during the STT recording window.
+        # The user is about to speak for ~5s; we use that dead time to get the model into VRAM.
+        # ModelRegistry._lock (RLock) is thread-safe: if the model is already cached this is a
+        # no-op; if it's mid-load when router.respond() arrives, that call blocks briefly for
+        # the remainder — still faster than the full sequential load. Fire-and-forget; errors
+        # are non-fatal (model loads on demand as before).
+        def _prewarm_default() -> None:
+            try:
+                from agent.core.llama_backend import _REGISTRY, CAPABILITY_MAP
+
+                cap = "chat" if "chat" in CAPABILITY_MAP else "default"
+                _t_pw = time.perf_counter()
+                _REGISTRY.get_backend(cap)
+                print(f"[Roamin] Pre-warm '{cap}' ready in {time.perf_counter() - _t_pw:.1f}s", flush=True)
+            except Exception as _pw_err:
+                print(f"[Roamin] Pre-warm failed ({_pw_err}) — will load on demand", flush=True)
+
+        _prewarm_thread = threading.Thread(target=_prewarm_default, daemon=True, name="gguf-prewarm")
+        _prewarm_thread.start()
 
         # STT — record and transcribe
         transcription = None
@@ -719,6 +916,12 @@ class WakeListener:
             if not _precheck_no_think:
                 print("[Roamin] Think-tier query — bypassing AgentLoop, routing to reasoning LLM", flush=True)
                 direct_result = {}  # sentinel: prevents AgentLoop; tool_context stays ""
+            else:
+                # Conversational fast-path: use a two-token LLM call to decide whether
+                # AgentLoop is needed. The GGUF is already pre-warmed (ENHANCE #1) so
+                # this is a ~50ms cache hit — no model load overhead on the critical path.
+                if _classify_intent(transcription) == "chat":
+                    direct_result = {}  # sentinel: bypasses AgentLoop, goes straight to response
 
         if direct_result is None:
             # Layer 2: AgentLoop — full planner for complex queries
@@ -832,6 +1035,16 @@ class WakeListener:
             if model_override:
                 print(f"[Roamin] Model override: {override_name} (capability: {model_override})")
 
+            # Conversational fast-path: use local GGUF 'chat' model instead of LM Studio.
+            # 'default' routes to LM Studio via HTTP (~10-24s). 'chat' uses the same
+            # DeepSeek R1 8B model loaded in-process — no HTTP overhead, same quality.
+            # Only applies when AgentLoop was bypassed (no tool output) and no explicit override.
+            if not model_override and not tool_context:
+                no_think_check, _ = _classify_think_level(transcription)
+                if no_think_check:
+                    task_type = "chat"
+                    print("[Roamin] Fast-path: using local 'chat' model (no LM Studio)", flush=True)
+
             # Two-layer system prompt: task instructions + Roamin sidecar context
             from agent.core.chat_engine import build_sidecar_context
 
@@ -855,11 +1068,13 @@ class WakeListener:
 
             # Layer 1: Task instructions (short, lets model use its training)
             if not no_think and not tool_context:
-                # Think-tier: allow multi-sentence thoughtful response
+                # Think-tier: 2 sentences max, start directly with the answer.
+                # "Okay, let's think through..." preambles waste ~47 chars of the voice budget
+                # before the real answer starts. No preamble = more answer in fewer chars.
                 layer1 = (
-                    "The user wants a thoughtful response. "
-                    "Answer thoroughly in natural spoken language. "
-                    "You may use multiple sentences. No markdown, no lists."
+                    "Answer in exactly 2 spoken sentences. "
+                    "Start the first word with your answer — no 'Okay', no preamble, no transition. "
+                    "Be accurate and direct. No markdown, no lists."
                 )
             elif tool_context:
                 layer1 = (
@@ -869,18 +1084,39 @@ class WakeListener:
                 )
             else:
                 layer1 = (
-                    "Reply in one natural spoken sentence. Plain text only. "
-                    "No lists, no narration, no internal state."
+                    "Reply in one direct spoken sentence, 12 words maximum. "
+                    "Be concise. Plain text only. No hedging, no lists, no narration."
                 )
 
             # Layer 2: Roamin sidecar (persona + context)
             # NOTE: MemPalace data is already in tool_context (layer1) when present.
             # Don't double-inject it into the sidecar — wastes tokens and confuses model.
-            layer2 = build_sidecar_context(
-                memory_context=memory_context,
-                mempalace_context="",
-                session_context=session.get_context_block(),
-            )
+            #
+            # Conversational fast-path: skip full sidecar (1500-char persona + session dump).
+            # The full sidecar causes the model to hallucinate personal details from session
+            # context and respond in a verbose narrative register instead of voice-appropriate
+            # one-sentence answers. For no-think / no-tool queries, only the anti-hallucination
+            # rules are needed. Full sidecar is reserved for tool-using and think-tier queries.
+            if not tool_context:
+                # No tool context: use rule-only sidecar for both conversational and think-tier.
+                # Full sidecar (1500-char persona) causes token budget waste on context analysis.
+                # Identity statement ("You are Roamin, a voice assistant") causes the model to
+                # respond with self-description when it doesn't know the answer — "I am Roamin,
+                # a voice assistant designed to..." — instead of "I don't know." Rules only,
+                # no identity claim: the model's training already handles question-answering.
+                layer2 = (
+                    "Answer the question directly and concisely. "
+                    "If you don't know something, say so briefly. "
+                    "Never invent information. Plain text only, no markdown."
+                )
+            else:
+                # Tool context present: inject full sidecar so the model understands who it
+                # serves when synthesizing tool results into a response.
+                layer2 = build_sidecar_context(
+                    memory_context=memory_context,
+                    mempalace_context="",
+                    session_context="",
+                )
 
             system_content = f"{layer1}\n\n{layer2}"
             messages = [
@@ -904,28 +1140,54 @@ class WakeListener:
             # Strip reasoning blocks and markdown — same pipeline as chat_engine.py
             reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
             reply = re.sub(r"</?[\w]+>", "", reply).strip()
+            # NOTE: leakage safety net removed. The unclosed-think-block case is now handled
+            # in llama_backend._stream_with_think_print by appending </think> before return,
+            # which ensures the regex always has a matching pair to strip. Pattern-matching on
+            # the reply start caused false positives when valid answers began with "Okay, so..."
             reply = re.sub(r"\*{1,3}(.+?)\*{1,3}", r"\1", reply)
             reply = re.sub(r"_{1,2}(.+?)_{1,2}", r"\1", reply)
             reply = re.sub(r"^#{1,6}\s+", "", reply, flags=re.MULTILINE)
             reply = re.sub(r"^\s*[-*]\s+", "", reply, flags=re.MULTILINE)
             reply = re.sub(r"\n{3,}", "\n\n", reply).strip()
             reply = re.sub(r"[^\x00-\x7F]+", "", reply).strip()
-            # Think-tier: let model finish its full output; OFF-tier: keep voice replies short
-            if no_think:
-                reply = reply[:200] if reply else ("Got it." if fact_stored else "Done.")
-            else:
-                reply = reply if reply else ("Got it." if fact_stored else "Done.")
+            # Length cap — both paths: voice output must stay within TTS budget.
+            # Conversational (no_think): 120 chars (~20 words) → ~10s TTS
+            # Think-tier: 150 chars (~25 words, 2 sentences) → ~15-18s TTS
+            # Truncate at last word boundary to avoid cutting mid-word.
+            _cap = 120 if no_think else 150
+            if len(reply) > _cap:
+                reply = reply[:_cap].rsplit(" ", 1)[0]
+            reply = reply if reply else ("Got it." if fact_stored else "Done.")
         except Exception:
             reply = "Got it." if fact_stored else "Done."
         t_reply = time.perf_counter()
         print(f"[Roamin] t={t_reply - t0:.3f}s  Reply generated (+{t_reply - t_stt:.3f}s) -> '{reply}'")
 
-        # Unload LLM before TTS — frees VRAM so Chatterbox can synthesize without contention
-        _unload_llm()
+        # NOTE: _unload_llm() intentionally removed here.
+        # Previously called before every TTS synthesis to free VRAM for Chatterbox.
+        # Cost: 4.7s model reload on every subsequent inference call (confirmed in logs).
+        # The assumption that GGUF + Chatterbox cannot coexist in VRAM is unverified.
+        # If Chatterbox synthesis fails with an OOM error, restore this call conditionally
+        # (e.g., only on explicit memory pressure, not unconditionally every interaction).
 
-        # TTS — speak reply (streaming pipeline for multi-sentence LLM replies)
+        # TTS — route based on reply complexity.
+        # Conversational fast-path (no_think): use speak() — single Chatterbox synthesis call.
+        # speak_streaming() splits on sentence boundaries; each split = one HTTP round-trip to
+        # Chatterbox (~3-4s minimum overhead per call). "One. Two. Three. Four." → 4 calls → 15s.
+        # Single speak() call = 1 synthesis request regardless of sentence count → ~5-7s.
+        # Think-tier / tool-context replies may span multiple long sentences where streaming
+        # pipeline (synthesize N+1 while playing N) meaningfully reduces perceived latency.
+        # TTS routing:
+        # Conversational (no_think, 120-char cap, 1 sentence): speak() — single synthesis call.
+        #   At 120 chars, no streaming benefit; single call avoids HTTP overhead per sentence.
+        # Think-tier (150-char cap, 2 sentences): speak_streaming() — pipeline synthesis.
+        #   With 2 sentences, sentence 2 synthesizes while sentence 1 plays.
+        #   User hears first sentence after ~8s instead of waiting for all ~15s of synthesis.
         if tts.is_available():
-            tts.speak_streaming(reply)
+            if no_think:
+                tts.speak(reply)
+            else:
+                tts.speak_streaming(reply)
         t_spoken = time.perf_counter()
         print(f"[Roamin] t={t_spoken - t0:.3f}s  Reply spoken (+{t_spoken - t_reply:.3f}s)")
         print(f"[Roamin] TOTAL: {t_spoken - t0:.3f}s")
@@ -941,7 +1203,7 @@ class WakeListener:
 
         # Store conversation in memory (uses session ID instead of hardcoded value)
         try:
-            model_label = override_name or "Qwen3-VL-8B"
+            model_label = override_name or task_type
             memory.write_to_memory(
                 "conversation",
                 {"session_id": session.session_id, "model_used": model_label, "content": f"User: {transcription}"},

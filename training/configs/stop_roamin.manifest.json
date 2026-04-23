@@ -1,0 +1,7 @@
+{
+  "completed": true,
+  "preview_completed": false,
+  "augment_completed": true,
+  "train_completed": true,
+  "onnx_path": "/mnt/c/AI/roamin-ambient-agent-tts/training/out/stop_roamin.onnx"
+}

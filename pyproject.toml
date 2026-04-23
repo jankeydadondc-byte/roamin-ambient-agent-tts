@@ -17,6 +17,15 @@ line_length = 120
 [tool.flake8]
 max-line-length = 120
 extend-ignore = ["E203"]
+exclude = [
+    ".git",
+    "__pycache__",
+    ".venv",           # Main development environment (Windows)
+    "training/venv",   # Training environment (Linux on Windows - contains broken sympy 1.14.0)
+    "*.egg-info",
+    "dist",
+    "build"
+]
 per-file-ignores = [
     # RUST_LOG must be set before any imports so Rust extensions initialize at WARN level.
     # E402 (module level import not at top of file) is intentional here.
@@ -26,3 +35,7 @@ per-file-ignores = [
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
+exclude = [
+    "training/",
+    "ui/",
+]

@@ -240,10 +240,11 @@ class AgentLoop:
             except ImportError:
                 return False, "Vision is unavailable: Pillow is not installed."
             try:
-                from agent.core.llama_backend import QWEN3_VL_8B_MMPROJ
+                from agent.core.llama_backend import _MMPROJ_MAP, CAPABILITY_MAP
 
-                if QWEN3_VL_8B_MMPROJ is None:
-                    return False, "Vision is unavailable: the multimodal projection file is missing."
+                vision_model = CAPABILITY_MAP.get("vision")
+                if vision_model is None or vision_model not in _MMPROJ_MAP:
+                    return False, "Vision is unavailable: no vision model with a projection file was found."
             except ImportError:
                 return False, "Vision is unavailable: llama-cpp-python backend not found."
         return True, ""

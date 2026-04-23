@@ -1,0 +1,59 @@
+# Wake word training config — passed to: python -m openwakeword.train --training_config hey_roamin.yaml
+# All field names confirmed from openwakeword/train.py source (2026-04-17)
+# model_name must match ^[a-zA-Z0-9_-]+$ — used to construct output filename
+#
+# Colab UI label → real YAML field:
+#   number_of_examples      → n_samples × augmentation_rounds (5000 × 10 = 50,000 total)
+#   number_of_training_steps → steps (45400)
+#   false_activation_penalty → max_negative_weight (300)
+
+model_name: hey_roamin
+output_dir: "training/out/"          # ONNX saved as output_dir/model_name.onnx
+
+# Path to the piper_shim/ directory — OWW does sys.path.insert(0, this) then
+# "from generate_samples import generate_samples". The shim bridges the API gap
+# between OWW (no model arg, auto_reduce_batch_size) and pip piper-sample-generator 3.2.0.
+piper_sample_generator_path: "training/piper_shim"
+
+# Adversarial negative phrases appended on top of OWW-generated adversarials.
+# Keep empty to rely purely on OWW's built-in generate_adversarial_texts().
+custom_negative_phrases: []
+
+# Stage 1: --generate_clips (piper-sample-generator)
+# IMPORTANT: target_phrase MUST be a list — a bare string causes character-iteration bug in OWW
+target_phrase:
+  - "hey roamin"
+  - "hey roaming"                    # common mishearing
+  - "hey rome in"                    # phonetic variation
+n_samples: 5000                      # total positive WAVs distributed across all phrases
+n_samples_val: 500                   # held-out validation positives (not augmented for training)
+tts_batch_size: 100                  # piper-sample-generator GPU batch size
+
+# Stage 2: --augment_clips
+# Mixes positive WAVs with background audio + RIR impulse responses
+augmentation_batch_size: 100
+augmentation_rounds: 10              # n_samples × rounds = 50,000 total training examples
+background_paths:
+  - "training/data/background/"      # downloaded by data_bootstrap.sh (§3.3)
+background_paths_duplication_rate:
+  - 1
+rir_paths:
+  - "training/data/rir/"            # MIT IR Survey; downloaded by data_bootstrap.sh
+
+# Model architecture
+model_type: "dnn"                    # options: "dnn" (fast inference) or "rnn" (lstm)
+layer_size: 128
+batch_n_per_class: {}   # empty dict → OWW auto-calculates per-class batch sizes from data shapes
+
+# Validation data — pre-downloaded by data_bootstrap.sh
+# Source: https://huggingface.co/datasets/davidscripka/openwakeword_features/resolve/main/validation_set_features.npy
+false_positive_validation_data_path: "training/data/validation_set_features.npy"
+
+# Required by OWW training script — script auto-populates 'positive' and 'adversarial_negative' keys;
+# must exist in config as an empty dict so the script can mutate it
+feature_data_files: {}
+
+# Stage 3: --train_model — locked hyperparameters
+steps: 45400                         # sequence-1 training steps
+max_negative_weight: 300             # peak false-activation penalty (linearly ramped 1 → 300)
+target_false_positives_per_hour: 0.2 # sequence-2 trigger threshold (OWW default)

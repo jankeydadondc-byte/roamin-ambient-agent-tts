@@ -400,6 +400,42 @@ def main() -> None:
     else:
         print("[Roamin] Wake word listener unavailable — using ctrl+space only.")
 
+    # Pause wake word detection during TTS playback so speaker output doesn't
+    # re-trigger the wake word. Wraps tts.speak / tts.speak_streaming in-place.
+    #
+    # Also pause during STT recording so a second "Hey Roamin" spoken while the
+    # mic is open (user repeating the wake phrase because they missed the "yes?")
+    # doesn't cause a phantom double-trigger or get captured as a query fragment.
+    if wake_word.is_available:
+        _orig_speak = tts.speak
+        _orig_speak_streaming = tts.speak_streaming
+        _orig_record = stt.record_and_transcribe
+
+        def _speak_paused(text: str) -> None:
+            wake_word.pause()
+            try:
+                _orig_speak(text)
+            finally:
+                wake_word.resume()
+
+        def _speak_streaming_paused(text: str) -> None:
+            wake_word.pause()
+            try:
+                _orig_speak_streaming(text)
+            finally:
+                wake_word.resume()
+
+        def _record_paused(*args, **kwargs):
+            wake_word.pause()
+            try:
+                return _orig_record(*args, **kwargs)
+            finally:
+                wake_word.resume()
+
+        tts.speak = _speak_paused
+        tts.speak_streaming = _speak_streaming_paused
+        stt.record_and_transcribe = _record_paused
+
     # --- Chat overlay launcher (single-instance, detached process) ---
     _chat_exe = Path(__file__).parent / "ui" / "roamin-chat" / "src-tauri" / "target" / "release" / "roamin-chat.exe"
     _chat_proc: list[subprocess.Popen | None] = [None]

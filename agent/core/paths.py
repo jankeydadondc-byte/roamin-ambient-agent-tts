@@ -255,8 +255,6 @@ def is_safe_mode_active() -> bool:
 try:
     PROJECT_ROOT = get_project_root()
 except Exception:
-    from pathlib import Path
-
     PROJECT_ROOT = Path.cwd()
 
 WORKSPACE_DIR = get_workspace_dir(PROJECT_ROOT)

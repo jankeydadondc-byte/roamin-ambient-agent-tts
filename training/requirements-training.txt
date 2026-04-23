@@ -1,0 +1,61 @@
+# Training-only dependencies — install inside training/venv/ ONLY.
+# Do NOT add these to the root requirements.txt.
+#
+# Key version pins (required to avoid pip resolver depth errors on Python 3.12):
+#   audiomentations==0.33.0   piper-sample-generator 3.2.0 pins this exactly
+#   soxr==0.3.7               older soxr versions have no Python 3.12 wheel
+#   librosa==0.10.2.post1     compatible with audiomentations 0.33.0
+#   datasets==2.20.0          pinned to break fsspec/dill/multiprocess cascade
+#   dill==0.3.8               required by datasets 2.20.0
+#   multiprocess==0.70.16     required by datasets 2.20.0
+#   onnx==1.17.0              stable; avoids ml_dtypes conflict with onnxruntime-gpu
+#   onnxruntime-gpu==1.20.0   matches onnx 1.17.0; GPU inference for verify/compare
+#   piper-tts==1.4.1          last version before pathvalidate 3.3+ conflict
+#
+# openwakeword is installed via wsl_bootstrap.sh with --no-deps to skip the
+# tflite-runtime dep (no Python 3.12 wheel). Its other deps (scipy,
+# scikit-learn, requests, onnxruntime) are listed below.
+#
+# piper-tts and piper-sample-generator are installed --no-deps in wsl_bootstrap.sh
+# to prevent them from pulling a conflicting audiomentations version.
+# Their actual runtime deps are covered by the explicit pins below.
+#
+# torch/torchvision/torchaudio are installed separately by wsl_bootstrap.sh from the
+# CUDA 12.6 index URL — NOT listed here to avoid pip pulling CPU-only wheels.
+
+# ML / training
+speechbrain>=1.0.0
+torchinfo
+torchmetrics
+torch-audiomentations
+mutagen
+acoustics
+onnx==1.17.0
+onnxruntime-gpu==1.20.0
+
+# Audio augmentation (pinned together — must stay in sync)
+audiomentations==0.33.0
+soxr==0.3.7
+librosa==0.10.2.post1
+
+# OWW non-tflite deps
+scipy>=1.4.0,<2
+scikit-learn>=1,<2
+requests>=2.0,<3
+
+# TTS / phonemization
+pathvalidate>=3,<4
+pronouncing>=0.2.0
+deep-phonemizer>=0.0.17
+webrtcvad
+
+# Datasets (pinned sub-deps to prevent resolver cascade)
+datasets==2.20.0
+dill==0.3.8
+multiprocess==0.70.16
+
+# Utilities
+pyyaml>=6.0
+numpy>=1.26,<2.0
+pandas>=2.2,<3.0
+tqdm>=4.0

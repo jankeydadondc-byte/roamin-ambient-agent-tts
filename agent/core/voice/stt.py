@@ -90,12 +90,14 @@ class SpeechToText:
             speech_confirm_chunks = 0
             speech_started = False
             total_chunks = 0
+            chunks_since_speech_started = 0  # wall-clock chunks elapsed since speech_started=True
             done_event = threading.Event()
 
             print("[Roamin] Listening (Silero VAD)...")
 
             def callback(indata, frames, time_status, buffer):
-                nonlocal silence_chunks, speech_started, speech_confirm_chunks, total_chunks
+                nonlocal silence_chunks, speech_started, speech_confirm_chunks
+                nonlocal total_chunks, chunks_since_speech_started
 
                 if frames != chunk_size:
                     return
@@ -123,14 +125,21 @@ class SpeechToText:
                             done_event.set()
                             raise sd.CallbackStop()
                 else:
-                    # Speech already started, watch for silence
-                    if prob < 0.3:
+                    # Speech already started, watch for silence.
+                    # Guard: don't allow silence to end recording until at least 15 wall-clock
+                    # chunks (~480ms) have elapsed since speech_started. This uses total elapsed
+                    # time rather than VAD-probability-weighted chunks, so short phrases like
+                    # "What time is it?" still fire normally — they produce 47+ total chunks
+                    # before silence. A single-syllable "hey" produces only ~6 chunks before
+                    # the user pauses, so the gate stays closed through the pause.
+                    chunks_since_speech_started += 1
+                    if prob >= 0.3:
+                        silence_chunks = 0
+                    elif chunks_since_speech_started >= 15:
                         silence_chunks += 1
-                        if silence_chunks >= 24:  # 24 chunks = ~1.5 seconds of silence
+                        if silence_chunks >= 24:  # ~768ms of silence after sufficient speech
                             done_event.set()
                             raise sd.CallbackStop()
-                    else:
-                        silence_chunks = 0
 
                 # Safety cap: max 10 seconds total recording
                 if total_chunks > 3200:

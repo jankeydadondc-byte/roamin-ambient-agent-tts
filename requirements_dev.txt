@@ -1,0 +1,3 @@
+
+# Sympy pinned for flake8 compatibility
+sympy==1.10.1  # Downgraded from 1.14.0 to fix RecursionError (issue #26692)

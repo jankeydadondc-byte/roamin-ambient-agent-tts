@@ -1,11 +1,17 @@
 """LlamaCpp-based in-process LLM inference backend for Roamin.
 
 This module eliminates external server dependencies by loading GGUF models directly
-via llama-cpp-python. All model paths are validated at runtime, not import time.
+via llama-cpp-python. CAPABILITY_MAP is built dynamically at import time by scanning
+configured model directories — no hardcoded paths or model-name assumptions.
+
+To add a new model family: add a rule to _MODEL_FAMILY_RULES below and restart Roamin.
+To try a new model: download the GGUF and restart — if it matches an existing rule it
+is picked up automatically.
 """
 
 from __future__ import annotations
 
+import re
 import threading
 from pathlib import Path
 
@@ -23,118 +29,126 @@ except ImportError:
     Llava15ChatHandler = None  # type: ignore
     Qwen25VLChatHandler = None  # type: ignore
 
-# Model paths validated at runtime (not import time)
-# --- Primary: Qwen3-VL-8B abliterated (unified default + vision) ---
-_MODELS_DIR = Path(r"C:\AI\roamin-ambient-agent-tts\models")
-
-QWEN3_VL_8B = _MODELS_DIR / "Qwen3-VL-8B-Instruct-abliterated-v2.Q4_K_M.gguf"
-QWEN3_VL_8B = QWEN3_VL_8B if QWEN3_VL_8B.exists() else None
-
-QWEN3_VL_8B_MMPROJ = _MODELS_DIR / "Qwen3-VL-8B-Instruct-abliterated-v2.mmproj-Q8_0.gguf"
-QWEN3_VL_8B_MMPROJ = QWEN3_VL_8B_MMPROJ if QWEN3_VL_8B_MMPROJ.exists() else None
-
-# --- Legacy: Qwen3 8B (Ollama blob, text-only fallback) ---
-QWEN3_8B = Path(
-    r"C:\Users\Asherre Roamin\.ollama\models\blobs\sha256-a3de86cd1c132c822487ededd47a324c50491393e6565cd14bafa40d0b8e686f"  # noqa: E501
-)
-QWEN3_8B = QWEN3_8B if QWEN3_8B.exists() else None
-
-# --- Qwen3.5 9B (legacy vision, kept for reference) ---
-QWEN35_9B = Path(
-    r"C:\Users\Asherre Roamin\.lmstudio\models\lmstudio-community" r"\Qwen3.5-9B-GGUF\Qwen3.5-9B-Q4_K_M.gguf"
-)
-QWEN35_9B = QWEN35_9B if QWEN35_9B.exists() else None
-
-QWEN35_9B_MMPROJ = Path(
-    r"C:\Users\Asherre Roamin\.lmstudio\models\lmstudio-community\Qwen3.5-9B-GGUF\mmproj-Qwen3.5-9B-BF16.gguf"
-)
-QWEN35_9B_MMPROJ = QWEN35_9B_MMPROJ if QWEN35_9B_MMPROJ.exists() else None
-
-# --- DeepSeek R1 8B ---
-DEEPSEEK_R1_8B = Path(r"C:\Users\Asherre Roamin\.lmstudio\models" r"\DeepSeek-R1-0528-Qwen3-8B-Q4_K_M.gguf")
-DEEPSEEK_R1_8B = DEEPSEEK_R1_8B if DEEPSEEK_R1_8B.exists() else None
-
-# --- Ministral 3 14B ---
-MINISTRAL_14B = Path(
-    r"C:\Users\Asherre Roamin\.lmstudio\models\lmstudio-community\Ministral-3-14B-Reasoning-2512-GGUF\Ministral-3-14B-Reasoning-2512-Q4_K_M.gguf"  # noqa: E501
-)
-MINISTRAL_14B = MINISTRAL_14B if MINISTRAL_14B.exists() else None
-
-MINISTRAL_14B_MMPROJ = Path(
-    r"C:\Users\Asherre Roamin\.lmstudio\models\lmstudio-community\Ministral-3-14B-Reasoning-2512-GGUF\mmproj-Ministral-3-14B-Reasoning-2512-F16.gguf"  # noqa: E501
-)
-MINISTRAL_14B_MMPROJ = MINISTRAL_14B_MMPROJ if MINISTRAL_14B_MMPROJ.exists() else None
-
-# --- Qwen3 Coder Next 80B ---
-QWEN3_CODER_NEXT = Path(
-    r"C:\Users\Asherre Roamin\.lmstudio\models\lmstudio-community\Qwen3-Coder-Next-GGUF\Qwen3-Coder-Next-Q4_K_M.gguf"
-)
-QWEN3_CODER_NEXT = QWEN3_CODER_NEXT if QWEN3_CODER_NEXT.exists() else None
-
-# --- Qwen3.5-27B Claude-4.6-Opus Reasoning Distilled (default chat + reasoning) ---
-QWEN35_27B_REASONING = Path(
-    r"C:\Users\Asherre Roamin\.lmstudio\models\mradermacher\Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-i1-GGUF"
-    r"\Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled.i1-Q4_K_S.gguf"
-)
-QWEN35_27B_REASONING = QWEN35_27B_REASONING if QWEN35_27B_REASONING.exists() else None
-
-# Capabilities that require the multimodal projection (mmproj) to be loaded.
-# Text-only capabilities (default, chat, fast) intentionally excluded — loading mmproj
-# adds ~350MB VRAM overhead and is wasted for pure text inference.
-_VISION_CAPABILITIES: frozenset[str] = frozenset(
+# ---------------------------------------------------------------------------
+# Model family rules — priority-ordered.
+#
+# Each rule maps a filename-matching regex to the capabilities that model
+# provides. First matching model found on disk wins each capability (lower
+# index = higher priority). If two rules compete for the same capability,
+# the higher-priority rule wins and the lower-priority rule skips it.
+#
+# text_caps:   {capability: n_ctx}  — loaded WITHOUT mmproj
+# vision_caps: {capability: n_ctx}  — loaded WITH mmproj (skipped if no mmproj on disk)
+#
+# n_ctx guidance:
+#   32768 — reasoning / chat tasks (no mmproj VRAM overhead)
+#   16384 — fast text or code tasks
+#    8192 — vision tasks (mmproj adds ~350MB VRAM; tighter ctx keeps total bounded)
+# ---------------------------------------------------------------------------
+_MODEL_FAMILY_RULES: list[dict] = [
     {
-        "vision",
-        "screen_reading",
-        "ministral_vision",
-    }
-)
+        # DeepSeek R1 — native <think> blocks, best default + reasoning model
+        "pattern": re.compile(r"deepseek.*r1", re.IGNORECASE),
+        "text_caps": {"default": 32768, "chat": 32768, "reasoning": 32768, "analysis": 32768},
+        "vision_caps": {},
+    },
+    {
+        # Qwen VL family — vision-language model; also handles fast text tasks without mmproj
+        "pattern": re.compile(r"qwen.*\bvl\b", re.IGNORECASE),
+        "text_caps": {"fast": 16384},
+        "vision_caps": {"vision": 8192, "screen_reading": 8192},
+    },
+    {
+        # Qwen Coder — heavy code generation
+        "pattern": re.compile(r"qwen.*coder|coder.*next", re.IGNORECASE),
+        "text_caps": {"code": 16384, "heavy_code": 16384},
+        "vision_caps": {},
+    },
+    {
+        # Ministral — vision + reasoning in one model
+        "pattern": re.compile(r"ministral", re.IGNORECASE),
+        "text_caps": {"ministral": 32768, "ministral_reasoning": 32768},
+        "vision_caps": {"ministral_vision": 32768},
+    },
+    {
+        # Fallback: large reasoning distillations (fills reasoning/analysis if DeepSeek absent)
+        "pattern": re.compile(r"reasoning.*distill|qwen.*27b", re.IGNORECASE),
+        "text_caps": {"reasoning": 32768, "analysis": 32768},
+        "vision_caps": {},
+    },
+]
 
-# mmproj lookup: maps model paths to their multimodal projection files.
-# Only consulted when the capability is in _VISION_CAPABILITIES.
-_MMPROJ_MAP: dict[Path | None, Path | None] = {
-    QWEN3_VL_8B: QWEN3_VL_8B_MMPROJ,
-    QWEN35_9B: QWEN35_9B_MMPROJ,
-    MINISTRAL_14B: MINISTRAL_14B_MMPROJ,
-}
 
-CAPABILITY_MAP: dict[str, Path | None] = {
-    # DeepSeek R1 8B — default chat with native <think> blocks
-    "default": DEEPSEEK_R1_8B,
-    "chat": DEEPSEEK_R1_8B,
-    "fast": QWEN3_VL_8B,  # VL 8B stays for fast/quick responses
-    "vision": QWEN3_VL_8B,
-    "screen_reading": QWEN3_VL_8B,
-    # DeepSeek R1 8B — deep reasoning
-    "reasoning": DEEPSEEK_R1_8B,
-    "analysis": DEEPSEEK_R1_8B,
-    # Qwen3 Coder Next 80B — heavy code tasks (requires full 24GB+ VRAM)
-    "code": QWEN3_CODER_NEXT,
-    "heavy_code": QWEN3_CODER_NEXT,
-    # Ministral 3 14B — vision + reasoning in one model
-    "ministral": MINISTRAL_14B,
-    "ministral_vision": MINISTRAL_14B,
-    "ministral_reasoning": MINISTRAL_14B,
-}
+def _build_capability_map() -> tuple[dict[str, Path], dict[str, int], dict[Path, Path], frozenset[str]]:
+    """Scan available GGUF files and build routing tables from what is on disk.
 
-# Context window sizes per capability.
-# Text tasks (default/chat/fast): 16384 — mmproj NOT loaded so the VRAM headroom is available.
-# Vision/screen_reading: 8192 — mmproj IS loaded (~350MB extra), keeping total VRAM bounded.
-# Reasoning and code models load exclusively (Qwen3-VL-8B unloads first), giving them
-# the VRAM headroom to support their full training context without overflow.
-_CAPABILITY_N_CTX: dict[str, int] = {
-    "default": 32768,
-    "chat": 32768,
-    "fast": 16384,
-    "vision": 8192,
-    "screen_reading": 8192,
-    "reasoning": 32768,
-    "analysis": 32768,
-    "code": 16384,
-    "heavy_code": 16384,
-    "ministral": 32768,
-    "ministral_vision": 32768,
-    "ministral_reasoning": 32768,
-}
+    Calls model_scanner.scan_models() which checks model_scan_paths from settings
+    plus ~/.lmstudio/models. Walks _MODEL_FAMILY_RULES in priority order; first
+    matching model wins each capability.
+
+    Returns:
+        cap_map:      capability → model Path  (no None values)
+        ctx_map:      capability → n_ctx tokens
+        mmproj_map:   model Path → mmproj Path (vision models only)
+        vision_caps:  frozenset of capabilities that require mmproj at load time
+    """
+    try:
+        from agent.core.model_scanner import scan_models
+
+        models = scan_models()
+    except Exception as exc:
+        print(f"[Roamin] WARNING: Model scan failed ({exc}) — no capabilities registered", flush=True)
+        return {}, {}, {}, frozenset()
+
+    cap_map: dict[str, Path] = {}
+    ctx_map: dict[str, int] = {}
+    mmproj_map: dict[Path, Path] = {}
+    vision_caps: set[str] = set()
+
+    for rule in _MODEL_FAMILY_RULES:
+        pattern = rule["pattern"]
+        matched = None
+
+        # Find first model whose filename matches this rule
+        for model in models:
+            if pattern.search(model["id"]) or pattern.search(model["name"]):
+                matched = model
+                break
+
+        if matched is None:
+            continue
+
+        model_path = Path(matched["file_path"])
+        has_mmproj = bool(matched.get("mmproj_path"))
+
+        if has_mmproj:
+            mmproj_map[model_path] = Path(matched["mmproj_path"])
+
+        # Register text capabilities (no mmproj overhead)
+        for cap, n_ctx in rule["text_caps"].items():
+            if cap not in cap_map:
+                cap_map[cap] = model_path
+                ctx_map[cap] = n_ctx
+
+        # Register vision capabilities (requires paired mmproj file)
+        for cap, n_ctx in rule["vision_caps"].items():
+            if cap in cap_map:
+                continue  # Already claimed by a higher-priority rule
+            if not has_mmproj:
+                continue  # No projection file — cannot enable this vision capability
+            cap_map[cap] = model_path
+            ctx_map[cap] = n_ctx
+            vision_caps.add(cap)
+
+    if cap_map:
+        print(f"[Roamin] Capabilities: {', '.join(sorted(cap_map))}", flush=True)
+    else:
+        print("[Roamin] WARNING: No GGUF models found — LLM inference unavailable", flush=True)
+
+    return cap_map, ctx_map, mmproj_map, frozenset(vision_caps)
+
+
+CAPABILITY_MAP, _CAPABILITY_N_CTX, _MMPROJ_MAP, _VISION_CAPABILITIES = _build_capability_map()
 
 
 class LlamaCppBackend:
@@ -376,9 +390,14 @@ class LlamaCppBackend:
                         buffer = buffer[safe_len:]
 
         # Flush remaining buffer
-        if in_think and buffer:
-            print(f"{DIM_CYAN}{buffer}{RESET}", end="", flush=True)
-            print(f"\n{BOLD_CYAN}[Roamin done thinking]{RESET}\n", flush=True)
+        if in_think:
+            if buffer:
+                print(f"{DIM_CYAN}{buffer}{RESET}", end="", flush=True)
+            print(f"\n{BOLD_CYAN}[Roamin done thinking — token budget exhausted]{RESET}\n", flush=True)
+            # Model hit max_tokens DURING the think block — never generated </think> or an answer.
+            # Close the tag so the caller's regex can strip <think>...</think> cleanly.
+            # Without this, the unclosed block leaks raw thinking content into TTS.
+            full_text += "\n</think>"
 
         return full_text.strip()
 
@@ -514,16 +533,14 @@ class ModelRegistry:
             # Validate capability
             model_path = CAPABILITY_MAP.get(capability)
             if model_path is None:
-                raise RuntimeError(
-                    f"No GGUF model registered for capability '{capability}'. "
-                    f"Available capabilities: {', '.join(CAPABILITY_MAP.keys())}"
-                )
+                avail = ", ".join(sorted(CAPABILITY_MAP)) if CAPABILITY_MAP else "none — no GGUF models found on disk"
+                raise RuntimeError(f"No GGUF model registered for capability '{capability}'. " f"Available: {avail}")
 
-            # Check if model file exists
+            # Check if model file exists (guards against deletion after startup scan)
             if not model_path.exists():
                 raise RuntimeError(
-                    f"Model file missing for '{capability}' ({model_path}). "
-                    "Please download the GGUF model and ensure the path is correct."
+                    f"Model file missing for '{capability}' ({model_path.name}). "
+                    "File may have been moved or deleted since startup."
                 )
 
             # Determine required multimodal projection (if any).
