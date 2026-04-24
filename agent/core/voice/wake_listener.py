@@ -607,8 +607,8 @@ class WakeListener:
         _on_wake, or at the start of the next cycle).
         """
         with self._state_lock:
-            if self._state == _WakeState.IDLE:
-                return  # nothing active — no-op
+            if self._state not in (_WakeState.SPEAKING, _WakeState.PROCESSING):
+                return  # only interrupt during active output phases; ignore during IDLE/LISTENING
             print("[Roamin] Stop word detected — cancelling", flush=True)
             self._stop_event.set()
             self._state = _WakeState.IDLE

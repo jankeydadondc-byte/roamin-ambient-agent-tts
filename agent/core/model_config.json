@@ -581,6 +581,67 @@
       "context_window": 32768,
       "always_available": false,
       "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\mradermacher\\Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled-i1-GGUF\\Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled.i1-Q4_K_S.gguf"
+    },
+    {
+      "id": "qwen2-5-coder-32b-q4-k-m",
+      "name": "Qwen2.5-Coder-32B-Q4_K_M",
+      "provider": "llama_cpp",
+      "model_id": "Qwen2.5-Coder-32B-Q4_K_M",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "code",
+        "json_output"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Qwen2.5-Coder-32B-GGUF\\Qwen2.5-Coder-32B-Q4_K_M.gguf"
+    },
+    {
+      "id": "qwen3-30b-a3b-q4-k-m",
+      "name": "Qwen3-30B-A3B-Q4_K_M",
+      "provider": "llama_cpp",
+      "model_id": "Qwen3-30B-A3B-Q4_K_M",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Qwen3-30B-A3B-GGUF\\Qwen3-30B-A3B-Q4_K_M.gguf"
+    },
+    {
+      "id": "qwen3-coder-30b-a3b-instruct-q4-k-m",
+      "name": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M",
+      "provider": "llama_cpp",
+      "model_id": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "code",
+        "json_output",
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\lmstudio-community\\Qwen3-Coder-30B-A3B-Instruct-GGUF\\Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+    },
+    {
+      "id": "qwopus3-5-27b-v3-q4-k-s",
+      "name": "Qwopus3.5-27B-v3-Q4_K_S",
+      "provider": "llama_cpp",
+      "model_id": "Qwopus3.5-27B-v3-Q4_K_S",
+      "endpoint": "local://llama_cpp",
+      "capabilities": [
+        "fast",
+        "general",
+        "chat"
+      ],
+      "context_window": 32768,
+      "always_available": false,
+      "file_path": "C:\\Users\\Asherre Roamin\\.lmstudio\\models\\Jackrong\\Qwopus3.5-27B-v3-GGUF\\Qwopus3.5-27B-v3-Q4_K_S.gguf"
     }
   ],
   "routing_rules": {

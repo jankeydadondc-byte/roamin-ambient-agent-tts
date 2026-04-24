@@ -18,7 +18,7 @@ import re
 import struct
 import tempfile
 import threading
-from itertools import count
+import time
 from pathlib import Path
 
 try:
@@ -39,8 +39,6 @@ _VOICE_SAMPLE = Path(r"C:\AI\chatterbox-api\voice-sample.mp3")
 _DISABLE_FLAG = Path(__file__).parents[3] / "logs" / ".disable-chatterbox"
 _TMP_DIR = Path(tempfile.gettempdir()) / "roamin_tts"
 _CACHE_DIR = Path(__file__).parent / "phrase_cache"
-_play_counter = count(1)  # unique suffix for tts-play-N thread names
-
 # Pre-defined phrases to cache as WAV files at startup.
 # Speak these instantly without hitting Chatterbox API.
 CACHED_PHRASES: list[str] = [
@@ -155,6 +153,38 @@ def _trim_wav_silence(path: Path, max_duration_s: float = 0.75) -> None:
         print(f"[TTS] Trimmed '{path.name}': {new_dur + trim_s:.2f}s → {new_dur:.2f}s")
     except Exception as e:
         print(f"[TTS] WAV trim failed ({path.name}): {e}")
+
+
+def _wav_duration(path: Path) -> float:
+    """Return playback duration in seconds by parsing the RIFF header.
+
+    Supports PCM int16 (format 1) and IEEE float32 (format 3, Chatterbox output).
+    Returns 30.0 on any parse failure so callers always get a usable deadline.
+    """
+    try:
+        raw = path.read_bytes()
+        if len(raw) < 44 or raw[:4] != b"RIFF" or raw[8:12] != b"WAVE":
+            return 30.0
+        pos = 12
+        n_ch, sr, bits = 1, 16000, 16
+        data_size = 0
+        while pos + 8 <= len(raw):
+            cid = raw[pos : pos + 4]
+            csz = struct.unpack_from("<I", raw, pos + 4)[0]
+            if cid == b"fmt ":
+                n_ch = struct.unpack_from("<H", raw, pos + 10)[0]
+                sr = struct.unpack_from("<I", raw, pos + 12)[0]
+                bits = struct.unpack_from("<H", raw, pos + 22)[0]
+            elif cid == b"data":
+                data_size = csz
+                break
+            pos += 8 + csz + (csz % 2)
+        if data_size == 0:
+            return 30.0
+        bps = sr * n_ch * (bits // 8)
+        return data_size / bps if bps > 0 else 30.0
+    except Exception:
+        return 30.0
 
 
 # Common abbreviations that should NOT be treated as sentence boundaries.
@@ -530,43 +560,35 @@ class TextToSpeech:
             pass  # non-fatal — play at whatever volume is set
 
     def _play_wav(self, path: Path) -> None:
-        """Play a WAV file. Interruptible via stop().
+        """Play a WAV file. Immediately interruptible via stop().
 
-        Spawns a daemon side thread for the blocking winsound call so this
-        method can poll _stop_flag at 50ms intervals. Thread is daemon=True
-        so it does not block process exit.
+        Uses SND_ASYNC so PlaySound returns immediately, then polls _stop_flag
+        at 50ms intervals until the sound finishes or stop() fires.
+        SND_PURGE works on async sounds — audio stops within one poll cycle (~50ms).
+
+        Note: stop() also calls SND_PURGE directly, so audio stops the instant
+        stop() is called. The poll loop here just unblocks the calling thread.
         """
         import winsound
 
         self._apply_volume()
-        play_done = threading.Event()
 
-        def _play() -> None:
-            try:
-                winsound.PlaySound(str(path), winsound.SND_FILENAME)
-            except Exception as e:
-                print(f"[TTS] playback error: {e}")
-            finally:
-                play_done.set()  # always fires, even on exception
+        # Bail immediately if stop was already set before playback started.
+        if self._stop_flag.is_set():
+            return
 
-        play_thread = threading.Thread(
-            target=_play,
-            daemon=True,
-            name=f"tts-play-{next(_play_counter)}",
-        )
-        play_thread.start()
+        duration = _wav_duration(path)
+        winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC)
 
-        while not play_done.wait(timeout=0.05):
+        deadline = time.monotonic() + duration + 0.5  # +0.5s grace for OS scheduler jitter
+        while time.monotonic() < deadline:
             if self._stop_flag.is_set():
                 try:
                     winsound.PlaySound(None, winsound.SND_PURGE)
                 except Exception:
                     pass
-                play_done.wait(timeout=0.5)  # brief grace for side thread to observe purge
-                return  # stop path — no join
-
-        # Normal completion. play_done fired from finally in the side thread;
-        # thread is daemon=True and holds no resources. No join needed.
+                return
+            time.sleep(0.05)
 
     def is_available(self) -> bool:
         """Always True — at minimum pyttsx3 is available."""
