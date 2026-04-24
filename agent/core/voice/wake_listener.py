@@ -27,7 +27,7 @@ from agent.core.screen_observer import _notify_approval_toast
 from agent.core.tool_registry import ToolRegistry
 from agent.core.voice.session import get_session
 from agent.core.voice.stt import SpeechToText
-from agent.core.voice.tts import TextToSpeech
+from agent.core.voice.tts import TextToSpeech, _split_sentences
 
 try:
     from agent.core.llama_backend import unload_current_model as _unload_llm
@@ -201,7 +201,40 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
         # leaving no budget for the actual answer. 1500 gives room for think + response.
         return False, 1500
 
-    return True, 80  # ~60 words headroom; 220-char post-cap trims the spoken reply cleanly
+    return True, 80  # ~60 words headroom; sentence-boundary post-cap keeps reply complete
+
+
+def _cap_reply_to_sentences(reply: str, *, no_think: bool) -> str:
+    """Trim a TTS reply to a natural sentence boundary.
+
+    Keeps complete sentences up to a max count and char ceiling so Roamin
+    never cuts a thought mid-word or mid-sentence.
+
+    no_think (conversational): up to 2 sentences, hard ceiling 280 chars.
+    think-tier (reasoning):    up to 3 sentences, hard ceiling 420 chars.
+
+    Falls back to the raw char ceiling with a word-boundary trim if the
+    sentence splitter returns nothing useful (e.g. reply has no punctuation).
+    """
+    max_sentences = 2 if no_think else 3
+    char_ceiling = 280 if no_think else 420
+
+    sentences = _split_sentences(reply)
+    kept: list[str] = []
+    total = 0
+    for s in sentences:
+        if kept and (len(kept) >= max_sentences or total + len(s) > char_ceiling):
+            break
+        kept.append(s)
+        total += len(s) + 1  # +1 for the space between sentences
+
+    if kept:
+        return " ".join(kept)
+
+    # Fallback: hard char ceiling at word boundary
+    if len(reply) > char_ceiling:
+        return reply[:char_ceiling].rsplit(" ", 1)[0]
+    return reply
 
 
 # ---------------------------------------------------------------------------
@@ -1245,13 +1278,8 @@ class WakeListener:
             reply = re.sub(r"^\s*[-*]\s+", "", reply, flags=re.MULTILINE)
             reply = re.sub(r"\n{3,}", "\n\n", reply).strip()
             reply = re.sub(r"[^\x00-\x7F]+", "", reply).strip()
-            # Length cap — both paths: voice output must stay within TTS budget.
-            # Conversational (no_think): 220 chars (~35 words, 1-2 sentences) → ~15s TTS
-            # Think-tier: 300 chars (~50 words, 2-3 sentences) → ~20-25s TTS
-            # Truncate at last word boundary to avoid cutting mid-word.
-            _cap = 220 if no_think else 300
-            if len(reply) > _cap:
-                reply = reply[:_cap].rsplit(" ", 1)[0]
+            # Cap to complete sentence boundaries — never cuts mid-thought.
+            reply = _cap_reply_to_sentences(reply, no_think=no_think)
             reply = reply if reply else ("Got it." if fact_stored else "Done.")
         except Exception:
             reply = "Got it." if fact_stored else "Done."
