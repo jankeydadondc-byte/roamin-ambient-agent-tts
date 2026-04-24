@@ -201,7 +201,7 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
         # leaving no budget for the actual answer. 1500 gives room for think + response.
         return False, 1500
 
-    return True, 80  # ~60 words headroom; 120-char post-cap trims the spoken reply cleanly
+    return True, 80  # ~60 words headroom; 220-char post-cap trims the spoken reply cleanly
 
 
 # ---------------------------------------------------------------------------
@@ -1246,10 +1246,10 @@ class WakeListener:
             reply = re.sub(r"\n{3,}", "\n\n", reply).strip()
             reply = re.sub(r"[^\x00-\x7F]+", "", reply).strip()
             # Length cap — both paths: voice output must stay within TTS budget.
-            # Conversational (no_think): 120 chars (~20 words) → ~10s TTS
-            # Think-tier: 150 chars (~25 words, 2 sentences) → ~15-18s TTS
+            # Conversational (no_think): 220 chars (~35 words, 1-2 sentences) → ~15s TTS
+            # Think-tier: 300 chars (~50 words, 2-3 sentences) → ~20-25s TTS
             # Truncate at last word boundary to avoid cutting mid-word.
-            _cap = 120 if no_think else 150
+            _cap = 220 if no_think else 300
             if len(reply) > _cap:
                 reply = reply[:_cap].rsplit(" ", 1)[0]
             reply = reply if reply else ("Got it." if fact_stored else "Done.")
