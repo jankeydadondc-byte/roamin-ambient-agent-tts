@@ -1,0 +1,8 @@
+schema: spec-driven
+created: 2026-04-17
+status: implemented
+implemented: 2026-04-18
+notes: >
+  Training pipeline executed in WSL2+CUDA. Both models trained and deployed:
+  hey_roamin.onnx and stop_roamin.onnx (7-phrase consolidated stop word model).
+  Models live at models/wake_word/. Runtime wire-up completed 2026-04-23 (commit 82bc748f).
