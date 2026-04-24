@@ -27,7 +27,7 @@ from agent.core.screen_observer import _notify_approval_toast
 from agent.core.tool_registry import ToolRegistry
 from agent.core.voice.session import get_session
 from agent.core.voice.stt import SpeechToText
-from agent.core.voice.tts import TextToSpeech, _split_sentences
+from agent.core.voice.tts import TextToSpeech
 
 try:
     from agent.core.llama_backend import unload_current_model as _unload_llm
@@ -131,15 +131,20 @@ def _classify_intent(transcription: str) -> str:
         return "tool"
 
 
-def _classify_think_level(text: str) -> tuple[bool, int]:
+def _classify_think_level(text: str) -> tuple[bool, int, int]:
     """Classify how much thinking Roamin should do for this prompt.
 
     Returns:
-        (no_think: bool, max_tokens: int)
-        OFF  (no_think=True,  max_tokens=150)  — default, simple queries
-        LOW  (no_think=False, max_tokens=512)  — basic think triggers
-        MED  (no_think=False, max_tokens=2048) — explicit think hard requests
-        HIGH (no_think=False, max_tokens=8192) — max effort requests
+        (no_think: bool, thinking_budget: int, response_budget: int)
+
+        Tier  | no_think | thinking | response | total
+        OFF   | True     |    0     |   150    |   150  — simple queries, no <think> block
+        LOW   | False    |  600     |   300    |   900  — one reasoning chain
+        MED   | False    | 1200     |   500    |  1700  — multi-step reasoning
+        HIGH  | False    | 4000     |  1000    |  5000  — full depth
+
+        For llama-cpp pass (thinking_budget + response_budget) as max_tokens.
+        thinking_budget=0 when no_think=True — no <think> block generated.
     """
     lower = text.lower()
 
@@ -156,7 +161,7 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
         "full effort",
     ]
     if any(t in lower for t in high_triggers):
-        return False, 8192
+        return False, 4000, 1000
 
     med_triggers = [
         "really think",
@@ -168,7 +173,7 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
         "be thorough",
     ]
     if any(t in lower for t in med_triggers):
-        return False, 2048
+        return False, 1200, 500
 
     low_triggers = [
         # NOTE: "think about" removed — it's a substring of "what do you think about X"
@@ -197,44 +202,9 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
         "what if",
     ]
     if any(t in lower for t in low_triggers):
-        # 512 tokens was insufficient — the thinking phase alone consumes 300-400+ tokens,
-        # leaving no budget for the actual answer. 1500 gives room for think + response.
-        return False, 1500
+        return False, 600, 300
 
-    return True, 150  # no text cap — model generates a complete answer; stop-word interrupts if needed
-
-
-def _cap_reply_to_sentences(reply: str, *, no_think: bool) -> str:
-    """Trim a TTS reply to a natural sentence boundary.
-
-    Keeps complete sentences up to a max count and char ceiling so Roamin
-    never cuts a thought mid-word or mid-sentence.
-
-    no_think (conversational): up to 2 sentences, hard ceiling 280 chars.
-    think-tier (reasoning):    up to 3 sentences, hard ceiling 420 chars.
-
-    Falls back to the raw char ceiling with a word-boundary trim if the
-    sentence splitter returns nothing useful (e.g. reply has no punctuation).
-    """
-    max_sentences = 2 if no_think else 3
-    char_ceiling = 280 if no_think else 420
-
-    sentences = _split_sentences(reply)
-    kept: list[str] = []
-    total = 0
-    for s in sentences:
-        if kept and (len(kept) >= max_sentences or total + len(s) > char_ceiling):
-            break
-        kept.append(s)
-        total += len(s) + 1  # +1 for the space between sentences
-
-    if kept:
-        return " ".join(kept)
-
-    # Fallback: hard char ceiling at word boundary
-    if len(reply) > char_ceiling:
-        return reply[:char_ceiling].rsplit(" ", 1)[0]
-    return reply
+    return True, 0, 150  # no <think> block; 150 response tokens; stop-word interrupts if needed
 
 
 # ---------------------------------------------------------------------------
@@ -287,14 +257,24 @@ _FUZZY_MODEL_CUTOFF = 0.72
 # Minimum max_tokens per capability when a voice model override is active.
 # Reasoning models emit <think> chains (300-500 tokens) before the spoken answer —
 # without a higher floor the chain crowds out the reply and it gets truncated.
-_CAPABILITY_MIN_TOKENS: dict[str, int] = {
-    "reasoning": 2048,
-    "analysis": 2048,
-    "ministral_reasoning": 2048,
-    "ministral": 1024,
-    "ministral_vision": 1024,
-    "code": 1024,
-    "heavy_code": 2048,
+_CAPABILITY_MIN_THINKING: dict[str, int] = {
+    "reasoning": 1200,
+    "analysis": 1200,
+    "ministral_reasoning": 1200,
+    "ministral": 600,
+    "ministral_vision": 600,
+    "code": 600,
+    "heavy_code": 1200,
+}
+
+_CAPABILITY_MIN_RESPONSE: dict[str, int] = {
+    "reasoning": 400,
+    "analysis": 400,
+    "ministral_reasoning": 400,
+    "ministral": 300,
+    "ministral_vision": 300,
+    "code": 400,
+    "heavy_code": 500,
 }
 
 
@@ -1025,7 +1005,7 @@ class WakeListener:
 
         # Think-tier queries bypass AgentLoop — tool execution adds no value for reasoning tasks
         if direct_result is None:
-            _precheck_no_think, _ = _classify_think_level(transcription)
+            _precheck_no_think, _, _ = _classify_think_level(transcription)
             if not _precheck_no_think:
                 print("[Roamin] Think-tier query — bypassing AgentLoop, routing to reasoning LLM", flush=True)
                 direct_result = {}  # sentinel: prevents AgentLoop; tool_context stays ""
@@ -1168,7 +1148,7 @@ class WakeListener:
             # DeepSeek R1 8B model loaded in-process — no HTTP overhead, same quality.
             # Only applies when AgentLoop was bypassed (no tool output) and no explicit override.
             if not model_override and not tool_context:
-                no_think_check, _ = _classify_think_level(transcription)
+                no_think_check, _, _ = _classify_think_level(transcription)
                 if no_think_check:
                     task_type = "chat"
                     print("[Roamin] Fast-path: using local 'chat' model (no LM Studio)", flush=True)
@@ -1178,29 +1158,41 @@ class WakeListener:
 
             # Use cleaned transcription (trigger phrase stripped) in prompt
             prompt_text = clean_text if model_override else transcription
-            no_think, think_max_tokens = _classify_think_level(transcription)
+            no_think, thinking_budget, response_budget = _classify_think_level(transcription)
+            think_max_tokens = thinking_budget + response_budget
 
-            # Model override: apply per-capability minimum token floor.
+            # Model override: apply per-capability minimum token floors.
             # Reasoning/code models need room for <think> chains + a complete answer.
             if model_override:
-                capability_min = _CAPABILITY_MIN_TOKENS.get(model_override, 512)
+                cap_think = _CAPABILITY_MIN_THINKING.get(model_override, 600)
+                cap_resp = _CAPABILITY_MIN_RESPONSE.get(model_override, 300)
                 if no_think:
                     no_think = False
-                think_max_tokens = max(think_max_tokens, capability_min)
+                thinking_budget = max(thinking_budget, cap_think)
+                response_budget = max(response_budget, cap_resp)
+                think_max_tokens = thinking_budget + response_budget
 
-            if tool_context and think_max_tokens < 200:
-                think_max_tokens = 200
+            if tool_context and response_budget < 200:
+                response_budget = 200
+                think_max_tokens = thinking_budget + response_budget
             stream_think = not no_think
             if stream_think and task_type not in ("reasoning", "code"):
                 task_type = "reasoning"
 
             # Layer 1: Task instructions (short, lets model use its training)
             if not no_think and not tool_context:
-                # Think-tier: 2 sentences max, start directly with the answer.
-                # "Okay, let's think through..." preambles waste ~47 chars of the voice budget
-                # before the real answer starts. No preamble = more answer in fewer chars.
+                # Think-tier: sentence guidance and effort calibration scale with budget tier.
+                if thinking_budget <= 600:  # LOW
+                    think_guidance = "Think briefly — one short reasoning chain. "
+                    sentence_guidance = "Answer in 1-2 spoken sentences."
+                elif thinking_budget <= 1200:  # MED
+                    think_guidance = "Reason carefully but stay focused. "
+                    sentence_guidance = "Answer in 2-3 spoken sentences."
+                else:  # HIGH
+                    think_guidance = "Use your full reasoning capability. "
+                    sentence_guidance = "Answer fully — as many sentences as needed."
                 layer1 = (
-                    "Answer in exactly 2 spoken sentences. "
+                    f"{think_guidance}{sentence_guidance} "
                     "Start the first word with your answer — no 'Okay', no preamble, no transition. "
                     "Be accurate and direct. No markdown, no lists."
                 )
@@ -1211,8 +1203,9 @@ class WakeListener:
                     f"Tool results:\n{tool_context}"
                 )
             else:
+                # OFF-tier (no_think, no tool_context)
                 layer1 = (
-                    "Reply in one direct spoken sentence, 12 words maximum. "
+                    "Reply in 1-2 direct spoken sentences. "
                     "Be concise. Plain text only. No hedging, no lists, no narration."
                 )
 
@@ -1253,8 +1246,9 @@ class WakeListener:
             ]
 
             print(
-                f"[Roamin] Think level: no_think={no_think}, max_tokens={think_max_tokens}"
-                f", stream_think={stream_think}, model={task_type}"
+                f"[Roamin] Think level: no_think={no_think}, "
+                f"thinking_budget={thinking_budget}, response_budget={response_budget}, "
+                f"total_tokens={think_max_tokens}, stream_think={stream_think}, model={task_type}"
             )
             reply = router.respond(
                 task_type,
