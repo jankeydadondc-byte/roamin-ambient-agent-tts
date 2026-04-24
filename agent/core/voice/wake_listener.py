@@ -136,7 +136,7 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
 
     Returns:
         (no_think: bool, max_tokens: int)
-        OFF  (no_think=True,  max_tokens=80)   — default, simple queries
+        OFF  (no_think=True,  max_tokens=150)  — default, simple queries
         LOW  (no_think=False, max_tokens=512)  — basic think triggers
         MED  (no_think=False, max_tokens=2048) — explicit think hard requests
         HIGH (no_think=False, max_tokens=8192) — max effort requests
@@ -201,7 +201,7 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
         # leaving no budget for the actual answer. 1500 gives room for think + response.
         return False, 1500
 
-    return True, 80  # ~60 words headroom; sentence-boundary post-cap keeps reply complete
+    return True, 150  # no text cap — model generates a complete answer; stop-word interrupts if needed
 
 
 def _cap_reply_to_sentences(reply: str, *, no_think: bool) -> str:
@@ -1278,8 +1278,6 @@ class WakeListener:
             reply = re.sub(r"^\s*[-*]\s+", "", reply, flags=re.MULTILINE)
             reply = re.sub(r"\n{3,}", "\n\n", reply).strip()
             reply = re.sub(r"[^\x00-\x7F]+", "", reply).strip()
-            # Cap to complete sentence boundaries — never cuts mid-thought.
-            reply = _cap_reply_to_sentences(reply, no_think=no_think)
             reply = reply if reply else ("Got it." if fact_stored else "Done.")
         except Exception:
             reply = "Got it." if fact_stored else "Done."
@@ -1293,19 +1291,11 @@ class WakeListener:
         # If Chatterbox synthesis fails with an OOM error, restore this call conditionally
         # (e.g., only on explicit memory pressure, not unconditionally every interaction).
 
-        # TTS — route based on reply complexity.
-        # Conversational fast-path (no_think): use speak() — single Chatterbox synthesis call.
-        # speak_streaming() splits on sentence boundaries; each split = one HTTP round-trip to
-        # Chatterbox (~3-4s minimum overhead per call). "One. Two. Three. Four." → 4 calls → 15s.
-        # Single speak() call = 1 synthesis request regardless of sentence count → ~5-7s.
-        # Think-tier / tool-context replies may span multiple long sentences where streaming
-        # pipeline (synthesize N+1 while playing N) meaningfully reduces perceived latency.
-        # TTS routing:
-        # Conversational (no_think, 120-char cap, 1 sentence): speak() — single synthesis call.
-        #   At 120 chars, no streaming benefit; single call avoids HTTP overhead per sentence.
-        # Think-tier (150-char cap, 2 sentences): speak_streaming() — pipeline synthesis.
-        #   With 2 sentences, sentence 2 synthesizes while sentence 1 plays.
-        #   User hears first sentence after ~8s instead of waiting for all ~15s of synthesis.
+        # TTS — all replies go through speak_streaming() so the user can interrupt at any
+        # sentence boundary. No pre-truncation: the stop-word interrupt handles length.
+        # speak_streaming() pipelines synthesis: sentence N+1 synthesizes while N plays,
+        # so first audio arrives after one sentence worth of synthesis (~2-4s) regardless
+        # of total reply length.
         with self._state_lock:
             if self._stop_event.is_set():
                 self._transition_to(_WakeState.IDLE)
@@ -1313,10 +1303,7 @@ class WakeListener:
             self._transition_to(_WakeState.SPEAKING)
 
         if tts.is_available():
-            if no_think:
-                tts.speak(reply)
-            else:
-                tts.speak_streaming(reply)
+            tts.speak_streaming(reply)
         t_spoken = time.perf_counter()
         print(f"[Roamin] t={t_spoken - t0:.3f}s  Reply spoken (+{t_spoken - t_reply:.3f}s)")
         print(f"[Roamin] TOTAL: {t_spoken - t0:.3f}s")
