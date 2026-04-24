@@ -39,11 +39,8 @@ _FRAME_MS = 80  # 80ms frames — OpenWakeWord default chunk size
 _SAMPLE_RATE = 16000  # 16kHz mono — required by OpenWakeWord
 _FRAME_SAMPLES = int(_SAMPLE_RATE * _FRAME_MS / 1000)  # 1280 samples per frame
 
-# Energy gate threshold for echo suppression during stop-word detection.
-# When speaker output produces loud audio picked up by the mic, we suppress
-# stop-word detections to avoid self-triggering.
-_ENERGY_GATE_RMS = 1500  # Stop-word: suppress when speaker output is this loud (echo suppression)
-_WAKE_ENERGY_MIN_RMS = 150  # Wake-word: skip detection when frame is quieter than this
+_WAKE_ENERGY_MIN_RMS = 150  # Wake-word: skip frames quieter than this (ambient noise gate)
+_STOP_ENERGY_MIN_RMS = 150  # Stop-word: skip frames quieter than this (same gate as wake word)
 
 
 class WakeWordListener:
@@ -349,6 +346,8 @@ class WakeWordListener:
 
         # Check all model outputs against threshold
         for model_name, score in prediction.items():
+            if score > 0.05:
+                logger.debug("Wake model score: %s=%.3f (rms=%.0f)", model_name, score, rms)
             if score >= self._threshold:
                 now = time.time()
                 if now - self._last_detection_time < self._detection_cooldown:
@@ -397,14 +396,14 @@ class WakeWordListener:
     def _check_stop_word(self, frame: np.ndarray) -> None:
         """Feed frame to stop model and fire callback on detection.
 
-        Includes an energy gate: if the mic is picking up loud audio
-        (likely speaker echo from TTS playback), suppress detection to
-        avoid self-triggering.
+        Uses a minimum energy gate (same direction as wake word) to skip
+        silent/ambient frames. The OWW model itself handles false-positive
+        rejection — it's trained on specific speech patterns, not arbitrary
+        loud audio, so a maximum-energy echo gate is not needed here.
         """
-        # Energy gate — compute RMS of frame
-        rms = np.sqrt(np.mean(frame.astype(np.float32) ** 2))
-        if rms > _ENERGY_GATE_RMS:
-            return  # Likely hearing TTS output through mic, suppress
+        rms = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))
+        if rms < _STOP_ENERGY_MIN_RMS:
+            return  # Too quiet to be speech — skip
 
         try:
             prediction = self._stop_model.predict(frame)
@@ -413,6 +412,8 @@ class WakeWordListener:
             return
 
         for model_name, score in prediction.items():
+            if score > 0.05:
+                logger.debug("Stop model score: %s=%.3f (rms=%.0f)", model_name, score, rms)
             if score >= self._threshold:
                 logger.info("Stop word detected: %s (score=%.3f)", model_name, score)
                 self._stop_model.reset()
