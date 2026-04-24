@@ -136,7 +136,7 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
 
     Returns:
         (no_think: bool, max_tokens: int)
-        OFF  (no_think=True,  max_tokens=60)   — default, simple queries
+        OFF  (no_think=True,  max_tokens=80)   — default, simple queries
         LOW  (no_think=False, max_tokens=512)  — basic think triggers
         MED  (no_think=False, max_tokens=2048) — explicit think hard requests
         HIGH (no_think=False, max_tokens=8192) — max effort requests
@@ -201,7 +201,7 @@ def _classify_think_level(text: str) -> tuple[bool, int]:
         # leaving no budget for the actual answer. 1500 gives room for think + response.
         return False, 1500
 
-    return True, 28  # ~20 words / ~100 chars — keeps Chatterbox TTS under ~12s
+    return True, 80  # ~60 words headroom; 120-char post-cap trims the spoken reply cleanly
 
 
 # ---------------------------------------------------------------------------

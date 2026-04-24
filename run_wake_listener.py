@@ -167,6 +167,46 @@ def _warmup(stt: SpeechToText, tts: TextToSpeech, agent_loop: AgentLoop) -> None
     print(f"[Roamin] Warmup complete in {time.perf_counter() - t0:.1f}s")
 
 
+def _kill_orphaned_wake_listeners() -> None:
+    """Kill any stale run_wake_listener.py processes left from a hard kill.
+
+    The named mutex prevents a second live instance from starting, but if a
+    previous instance was SIGKILL'd the OS releases the mutex while the Python
+    process may still appear briefly in the process list.  This scan catches
+    those ghosts before the new instance registers its own mutex.
+    """
+    my_pid = os.getpid()
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Get-CimInstance Win32_Process "
+                "| Where-Object { $_.CommandLine -like '*run_wake_listener.py*' } "
+                "| Select-Object -ExpandProperty ProcessId",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        for line in result.stdout.splitlines():
+            try:
+                pid = int(line.strip())
+                if pid > 0 and pid != my_pid:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/T", "/F"],
+                        capture_output=True,
+                        timeout=5,
+                    )
+                    print(f"[Roamin] Killed orphaned wake_listener PID {pid}", flush=True)
+            except ValueError:
+                pass
+    except Exception:
+        pass
+
+
 def _kill_orphaned_control_api() -> None:
     """Kill any leftover control_api processes before starting a fresh one.
 
@@ -322,6 +362,10 @@ def main() -> None:
     logging.getLogger("agent").setLevel(logging.DEBUG)
     for noisy in ("comtypes", "urllib3", "httpx", "chromadb", "posthog", "primp", "ddgs", "h2", "hpack", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    # Kill any stale wake_listener or control_api orphans from previous hard exits.
+    # Must run before mutex acquisition so we don't race with a dying ghost process.
+    _kill_orphaned_wake_listeners()
 
     # Single-instance guard — named mutex (primary) + PID lock file (secondary)
     # Mutex: OS-held, released automatically on any exit including crash/SIGKILL.
