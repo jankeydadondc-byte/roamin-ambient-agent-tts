@@ -1,3 +1,4 @@
 schema: spec-driven
 created: 2026-04-24
-status: proposed
+status: archived
+archived_reason: superseded by developer-local-claude-setup (which adds Cline as primary and covers all three tools in one unified guide)
