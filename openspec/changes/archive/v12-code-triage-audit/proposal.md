@@ -28,7 +28,6 @@ are classified, weighted, and queued for a separate remediation pass.
 Every file in `agent/` and `ui/control-panel/src/` is in scope, plus `launch.py`,
 `requirements.txt`, and the test suite. The following are explicitly excluded:
 
-- `` — unrelated project, never touch
 - `N.E.K.O./` — unrelated project, never touch
 - `framework/` — unrelated project, never touch
 - `models/` — binary model weights, not auditable

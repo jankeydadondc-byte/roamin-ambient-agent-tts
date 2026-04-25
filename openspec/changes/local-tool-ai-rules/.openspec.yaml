@@ -1,0 +1,5 @@
+schema: spec-driven
+title: Local Tool AI Rules — Per-Tool Instruction Files
+created: 2026-04-25
+status: accepted
+depends_on: developer-local-claude-setup

@@ -63,7 +63,6 @@ _RGLOB_EXCLUSIONS: frozenset[str] = frozenset(
     {
         "roamin-ambient-agent-tts",
         ".venv",
-        ".venv_external",
         "n.e.k.o.",
         "framework",
         "node_modules",

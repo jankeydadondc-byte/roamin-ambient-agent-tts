@@ -1,0 +1,4 @@
+{
+  "systemMessage": "You are helping develop Roamin, a voice-activated ambient AI agent (Python 3.12, Windows 11). Core components: wake word (OpenWakeWord + Whisper), streaming TTS, LM Studio inference at http://localhost:1234/v1. Do not auto-commit. Always show diffs before committing. Avoid referencing N.E.K.O./ or framework/ — they are not in this project. If Aider needs to be run, instruct the user to do so from PowerShell, not Git Bash.",
+  "mergeBehavior": "merge"
+}

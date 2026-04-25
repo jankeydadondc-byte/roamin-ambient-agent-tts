@@ -59,6 +59,9 @@ agent/core/voice/tmp/
 .claude/
 workspace/
 
+# Claude Code project rules — local only
+CLAUDE.md
+
 # Reference material — not part of the build
 N.E.K.O/
 framework/

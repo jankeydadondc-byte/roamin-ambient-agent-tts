@@ -446,7 +446,7 @@ The `LlamaCppBackend` implementation is comprehensive: model family detection fo
 #### [MEDIUM] `rglob` on `C:\AI` scans unrelated/ignored project directories — imports stray GGUFs
 - **Finding:** #39 | **Priority:** P2
 - **Location:** `_discover_filesystem()` lines 246–259 — `scan_root.rglob("*.gguf")` with `C:/AI` in `_WELL_KNOWN_SCAN_DIRS`
-- **Description:** `_WELL_KNOWN_SCAN_DIRS` includes `Path("C:/AI")` unconditionally if the directory exists. `rglob("*.gguf")` recurses the entire tree with no path exclusions. The ``, `N.E.K.O./`, and `framework/` directories sit inside `C:\AI`. Any GGUFs in those directories are auto-registered in `model_config.json`. This is already confirmed: `sex-roleplay-3-2-1b-q4-k-m` appears in `model_config.json` with a path inside an unrelated project.
+- **Description:** `_WELL_KNOWN_SCAN_DIRS` includes `Path("C:/AI")` unconditionally if the directory exists. `rglob("*.gguf")` recurses the entire tree with no path exclusions. External workspace directories (`N.E.K.O./`, `framework/`) sit inside `C:\AI`. Any GGUFs in those directories are auto-registered in `model_config.json`, contaminating Roamin's model registry.
 - **Risk:** Models from unrelated projects contaminate Roamin's model registry. Routing could select them for `fast/general/chat` tasks. Cleanup requires manual removal; they re-appear on next startup.
 - **Suggested fix:** Add a `_SCAN_PATH_SKIP` set of absolute path prefixes (parallel to `_SCAN_DIR_SKIP`) and apply it inside `_discover_filesystem()` before collecting GGUF paths. Include the three ignored project roots.
 
@@ -1444,7 +1444,7 @@ The existing tests correctly exercise the plugin CRUD surface (install, list, en
 #### [MEDIUM] `test_validators.py` — no path traversal attack tests
 - **Finding:** #110 | **Priority:** P3
 - **Location:** `TestValidatePath` — no traversal or bypass test cases
-- **Description:** The test suite covers allowlist membership (inside project root, inside home, system dirs). It does not test path traversal patterns: `agent/../../../etc/passwd`, `agent/core/../../secrets`, or URL-encoded separators. Path resolution via `Path.resolve()` should canonicalize these, but there is no regression test to confirm traversal attempts are caught before (not after) validation.
+- **Description:** The test suite covers allowlist membership (inside project root, inside home, system dirs). It does not test path traversal patterns: `agent/../../../etc/passwd`, `agent/core/../../Windows/System32/etc/hosts`, or URL-encoded separators. Path resolution via `Path.resolve()` should canonicalize these, but there is no regression test to confirm traversal attempts are caught before (not after) validation.
 - **Suggested fix:** Add `test_path_traversal_rejected` with inputs like `str(_PROJECT_ROOT / "agent" / ".." / ".." / ".." / "Windows" / "System32" / "drivers" / "etc" / "hosts")` and assert `result` is not None and `success` is False.
 
 #### [LOW] Multiple test files use `time.sleep()` for async coordination — potentially flaky

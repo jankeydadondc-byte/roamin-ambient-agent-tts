@@ -1,0 +1,21 @@
+# Roamin Project Rules
+
+## Terminal
+- When running Aider, always launch it from PowerShell or CMD — never from Git Bash.
+  Git Bash's terminal emulation (xterm-256color) conflicts with Aider's interactive UI
+  and causes a prompt-toolkit crash. Use: `Start-Process powershell -ArgumentList "aider"`,
+  or instruct the user to run `aider` themselves from a PowerShell terminal.
+
+## Git
+- Never auto-commit. Always show the user a diff and let them commit manually.
+- Use `--no-auto-commits` when invoking Aider.
+
+## Project Context
+- This is Roamin: a voice-activated ambient AI agent.
+- Core pipeline: wake word (OpenWakeWord + Whisper validation) → chime → LLM → TTS playback (streaming).
+- All AI inference goes through LM Studio at http://localhost:1234/v1.
+
+## Off-Limits Directories
+- `N.E.K.O./` and `framework/` are NOT in this project.
+  They live in C:\AI\roamin-external-workspace\. Do not reference,
+  read, or create these directories inside this project.

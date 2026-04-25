@@ -206,7 +206,6 @@ except Exception:
 _SCAN_EXCLUSIONS = {
     "roamin-ambient-agent-tts",
     ".venv",
-    ".venv_external",
     "N.E.K.O.",
     "framework",
     "node_modules",
