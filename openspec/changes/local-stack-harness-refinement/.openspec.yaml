@@ -1,0 +1,5 @@
+schema: spec-driven
+title: Local Stack Harness Refinement
+created: 2026-04-25
+status: proposed
+depends_on: local-tool-ai-rules

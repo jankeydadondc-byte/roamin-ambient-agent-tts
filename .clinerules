@@ -9,11 +9,61 @@
 ## Git
 - Never auto-commit. Always show the user a diff and let them commit manually.
 - Use `--no-auto-commits` when invoking Aider.
+- Never amend a commit unless the user explicitly requests it.
+- Never use destructive git commands (reset --hard, checkout --, clean -f) unless explicitly asked.
+- Never revert or discard changes you did not make. If the working tree has existing
+  changes in files you need to touch, read them and work with them — do not overwrite.
+
+## Behavior
+- For simple, clear tasks: implement immediately — do not plan, narrate, or ask
+  permission. For ambiguous or large features: identify gaps and ask specific
+  clarifying questions first, then wait for answers before writing any code.
+- No cheerleading, filler, or acknowledgement openers ("Got it!", "Great question!",
+  "Absolutely!"). Be direct and stay on task.
+- Code review: only flag issues where confidence is high (you can cite exactly why it
+  is wrong). False positives waste time and erode trust. Lead with bugs and risks
+  ordered by severity with file:line references. Summaries come after findings.
+- Read a file before editing it. Group all edits to the same file into a single pass.
+- If the same linter or type error recurs three times on the same file, stop and ask
+  the user how to proceed instead of looping.
+- If unexpected changes in the working tree directly conflict with your current task,
+  stop and ask. If they are in unrelated files, ignore them and continue.
+- Parallelize independent reads and searches when possible.
+- Do not output code in chat unless the user explicitly asks to see it — use edit tools
+  to apply changes directly.
+
+## Security
+Flag and do not proceed if any of the following patterns appear in code being written:
+- `eval()`, `new Function()` — code injection risk; find a safer alternative
+- `os.system()` — shell injection; use `subprocess.run()` with a list of args instead
+- `pickle` on untrusted data — arbitrary code execution; use JSON or another safe format
+- `.innerHTML =` or `dangerouslySetInnerHTML` with untrusted content — XSS; use
+  `textContent` or a sanitizer (e.g. DOMPurify)
+- `document.write()` — XSS and performance; use DOM methods instead
+If one of these is genuinely required, flag it explicitly and let the user decide.
+
+## Frontend
+When working within the existing UIs (ui/control-panel or ui/roamin-chat), preserve
+the established visual patterns, structure, and style — do not redesign what is there.
+
+When creating new components or pages with no existing reference to match:
+- Choose a clear aesthetic direction before writing a line of code and commit to it.
+  Intentional minimalism and bold maximalism both work — the failure mode is neither.
+- Typography: choose distinctive fonts. Avoid Inter, Roboto, Arial, and system-ui
+  defaults. Pair a display font with a refined body font.
+- Color: use CSS variables for all values. Dominant colors with sharp accents
+  outperform timid, evenly-distributed palettes. Avoid purple gradients on white.
+- Motion: one well-orchestrated page-load sequence with staggered reveals creates more
+  impact than scattered micro-interactions. Use the Motion library for React.
+- Layout: prefer asymmetry, overlap, and grid-breaking elements over centered boxes.
+- Do not add useMemo/useCallback by default — only if already present in the file.
+- Use modern React patterns (startTransition, useDeferredValue) where appropriate.
 
 ## Project Context
-- This is Roamin: a voice-activated ambient AI agent.
+- This is Roamin: a voice-activated ambient AI agent (Python 3.12, Windows 11).
 - Core pipeline: wake word (OpenWakeWord + Whisper validation) → chime → LLM → TTS playback (streaming).
 - All AI inference goes through LM Studio at http://localhost:1234/v1.
+- UIs: ui/control-panel (React/Vite monitoring dashboard) and ui/roamin-chat (Tauri chat app).
 
 ## Off-Limits Directories
 - `N.E.K.O./` and `framework/` are NOT in this project.
